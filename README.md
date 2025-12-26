@@ -164,12 +164,10 @@ This project is developed by a team of 4 students:
 
 ## 📱 Supported Platforms
 
-- ✅ Android
-- ✅ iOS
-- ✅ Web
-- ✅ macOS
-- ✅ Linux
-- ✅ Windows
+- ✅ **Android** (Primary target)
+- ✅ **Web** (Primary target)
+
+*Note: iOS, macOS, Linux, and Windows support can be added later if needed.*
 
 ---
 
