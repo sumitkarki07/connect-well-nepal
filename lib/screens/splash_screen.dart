@@ -38,22 +38,11 @@ class _SplashScreenState extends State<SplashScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // TODO: Replace with actual logo image
-            // Image.asset('assets/logos/logo.png', width: 200),
-            
-            // Placeholder Logo Circle
-            Container(
+            // Connect Well Nepal Logo
+            Image.asset(
+              'assets/logos/logo.png',
               width: 200,
               height: 200,
-              decoration: BoxDecoration(
-                color: AppColors.primaryNavyBlue.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.health_and_safety,
-                size: 100,
-                color: AppColors.primaryNavyBlue,
-              ),
             ),
             
             const SizedBox(height: 24),

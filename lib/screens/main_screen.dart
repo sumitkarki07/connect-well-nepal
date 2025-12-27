@@ -56,19 +56,14 @@ class _MainScreenState extends State<MainScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // TODO: Replace with actual logo
-            // Image.asset('assets/logos/logo_icon.png', height: 32),
-            Container(
-              width: 32,
-              height: 32,
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.health_and_safety,
-                color: AppColors.secondaryCrimsonRed,
-                size: 20,
+            // Connect Well Nepal Logo Icon
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Image.asset(
+                'assets/logos/logo_icon.png',
+                height: 32,
+                width: 32,
+                fit: BoxFit.cover,
               ),
             ),
             const SizedBox(width: 8),
