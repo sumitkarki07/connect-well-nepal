@@ -6,10 +6,13 @@ import 'package:connect_well_nepal/screens/appointments_screen.dart';
 import 'package:connect_well_nepal/screens/resources_screen.dart';
 import 'package:connect_well_nepal/screens/settings_screen.dart';
 import 'package:connect_well_nepal/screens/doctor_dashboard_screen.dart';
+import 'package:connect_well_nepal/screens/ai_assistant_screen.dart';
+import 'package:connect_well_nepal/screens/all_doctors_screen.dart';
+import 'package:connect_well_nepal/screens/all_healthcare_screen.dart';
 import 'package:connect_well_nepal/utils/colors.dart';
 import 'package:connect_well_nepal/models/place_model.dart';
 import 'package:connect_well_nepal/services/location_service.dart';
-import 'package:connect_well_nepal/services/places_service.dart';
+import 'package:connect_well_nepal/services/osm_places_service.dart';
 
 /// MainScreen - Primary navigation shell of the app
 ///
@@ -31,7 +34,7 @@ class _MainScreenState extends State<MainScreen> {
 
   // Services
   final LocationService _locationService = LocationService();
-  final PlacesService _placesService = PlacesService();
+  final OSMPlacesService _placesService = OSMPlacesService();
 
   // Places data
   List<PlaceModel> _nearbyHospitals = [];
@@ -45,7 +48,7 @@ class _MainScreenState extends State<MainScreen> {
     _loadNearbyPlaces();
   }
 
-  /// Load nearby hospitals and clinics
+  /// Load nearby hospitals and clinics using OSM (FREE - no billing required!)
   Future<void> _loadNearbyPlaces() async {
     setState(() {
       _isLoadingPlaces = true;
@@ -53,25 +56,19 @@ class _MainScreenState extends State<MainScreen> {
     });
 
     try {
-      // Get location first
-      final position = await _locationService.getCurrentLocation();
-
-      if (position == null) {
-        setState(() {
-          _locationError = 'Could not get your location';
-          _isLoadingPlaces = false;
-        });
-        // Still load demo data
-        _loadDemoData();
-        return;
-      }
-
-      // Fetch nearby places
-      final hospitals = await _placesService.getNearbyHospitals();
-      final clinics = await _placesService.getNearbyClinics();
+      // Fetch nearby healthcare facilities from OpenStreetMap
+      final places = await _placesService.getNearbyHealthcare();
+      
+      // Separate hospitals and clinics
+      final hospitals = places.where((p) => 
+        p.types.contains('hospital')
+      ).toList();
+      final clinics = places.where((p) => 
+        p.types.contains('clinic') || !p.types.contains('hospital')
+      ).toList();
 
       setState(() {
-        _nearbyHospitals = hospitals;
+        _nearbyHospitals = hospitals.isNotEmpty ? hospitals : places;
         _nearbyClinics = clinics;
         _isLoadingPlaces = false;
       });
@@ -86,27 +83,13 @@ class _MainScreenState extends State<MainScreen> {
 
   /// Load demo data when location is unavailable
   void _loadDemoData() {
-    setState(() {
-      _nearbyHospitals = _placesService.cachedHospitals.isNotEmpty
-          ? _placesService.cachedHospitals
-          : PlacesService().getNearbyHospitals().then((v) => v).toString().isEmpty
-              ? []
-              : [];
-      _nearbyClinics = _placesService.cachedClinics;
-    });
-
-    // Force load demo data
-    _placesService.getNearbyHospitals().then((hospitals) {
+    // Force load data from OSM (will return demo data if API fails)
+    _placesService.getNearbyHealthcare().then((places) {
       if (mounted) {
+        final hospitals = places.where((p) => p.types.contains('hospital')).toList();
+        final clinics = places.where((p) => !p.types.contains('hospital')).toList();
         setState(() {
-          _nearbyHospitals = hospitals;
-        });
-      }
-    });
-
-    _placesService.getNearbyClinics().then((clinics) {
-      if (mounted) {
-        setState(() {
+          _nearbyHospitals = hospitals.isNotEmpty ? hospitals : places;
           _nearbyClinics = clinics;
           _isLoadingPlaces = false;
         });
@@ -727,7 +710,12 @@ class _MainScreenState extends State<MainScreen> {
                 ),
                 TextButton(
                   onPressed: () {
-                    // TODO: Navigate to all doctors
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const AllDoctorsScreen(),
+                      ),
+                    );
                   },
                   child: const Text('See All'),
                 ),
@@ -767,7 +755,45 @@ class _MainScreenState extends State<MainScreen> {
             available: true,
           ),
 
-          const SizedBox(height: 24),
+          // See more doctors button
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: TextButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const AllDoctorsScreen(),
+                  ),
+                );
+              },
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.primaryNavyBlue,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'See more doctors',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primaryNavyBlue,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.arrow_forward_ios,
+                    size: 14,
+                    color: AppColors.primaryNavyBlue,
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
 
           // Nearby Healthcare Section (Clinics & Hospitals)
           Padding(
@@ -797,7 +823,14 @@ class _MainScreenState extends State<MainScreen> {
                 ),
                 TextButton(
                   onPressed: () {
-                    // TODO: Navigate to all healthcare facilities
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => AllHealthcareScreen(
+                          initialPlaces: _getCombinedHealthcareFacilities(),
+                        ),
+                      ),
+                    );
                   },
                   child: const Text('See All'),
                 ),
@@ -843,8 +876,50 @@ class _MainScreenState extends State<MainScreen> {
                 ),
               ),
             )
-          else
+          else ...[
             ..._getCombinedHealthcareFacilities().take(5).map((place) => _buildPlaceCard(place)),
+            
+            // See more healthcare button
+            if (_getCombinedHealthcareFacilities().length > 5)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: TextButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => AllHealthcareScreen(
+                          initialPlaces: _getCombinedHealthcareFacilities(),
+                        ),
+                      ),
+                    );
+                  },
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.primaryNavyBlue,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        'See more healthcare facilities',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primaryNavyBlue,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.arrow_forward_ios,
+                        size: 14,
+                        color: AppColors.primaryNavyBlue,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
 
           const SizedBox(height: 24),
         ],
@@ -1292,6 +1367,24 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       // Display the selected screen
       body: _getSelectedScreen(),
+
+      // AI Assistant Floating Action Button
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const AIAssistantScreen()),
+          );
+        },
+        backgroundColor: AppColors.primaryNavyBlue,
+        elevation: 4,
+        tooltip: 'AI Health Assistant',
+        child: const Icon(
+          Icons.psychology_rounded,
+          color: Colors.white,
+          size: 28,
+        ),
+      ),
 
       // Bottom Navigation Bar
       bottomNavigationBar: Consumer<AppProvider>(
