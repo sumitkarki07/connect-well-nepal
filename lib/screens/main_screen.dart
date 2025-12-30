@@ -9,6 +9,7 @@ import 'package:connect_well_nepal/screens/doctor_dashboard_screen.dart';
 import 'package:connect_well_nepal/screens/ai_assistant_screen.dart';
 import 'package:connect_well_nepal/screens/all_doctors_screen.dart';
 import 'package:connect_well_nepal/screens/all_healthcare_screen.dart';
+import 'package:connect_well_nepal/screens/chat_list_screen.dart';
 import 'package:connect_well_nepal/utils/colors.dart';
 import 'package:connect_well_nepal/models/place_model.dart';
 import 'package:connect_well_nepal/services/location_service.dart';
@@ -424,24 +425,7 @@ class _MainScreenState extends State<MainScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Connect Well Nepal Logo Icon
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Image.asset(
-                'assets/logos/logo_icon.png',
-                height: 32,
-                width: 32,
-                fit: BoxFit.cover,
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Text('Connect Well Nepal'),
-          ],
-        ),
+        title: const Text('Connect Well Nepal'),
         centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.settings_outlined),
@@ -453,6 +437,16 @@ class _MainScreenState extends State<MainScreen> {
           },
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ChatListScreen()),
+              );
+            },
+            tooltip: 'Messages',
+          ),
           IconButton(
             icon: const Icon(Icons.notifications_outlined),
             onPressed: () {

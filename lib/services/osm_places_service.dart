@@ -12,7 +12,12 @@ class OSMPlacesService {
   factory OSMPlacesService() => _instance;
   OSMPlacesService._internal();
 
-  static const String _overpassUrl = 'https://overpass-api.de/api/interpreter';
+  // Multiple Overpass API endpoints for redundancy
+  static const List<String> _overpassUrls = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  ];
   
   final LocationService _locationService = LocationService();
 
@@ -21,6 +26,7 @@ class OSMPlacesService {
   DateTime? _lastFetch;
   double? _lastLat;
   double? _lastLng;
+  int _currentUrlIndex = 0;
 
   List<PlaceModel> get cachedPlaces => _cachedPlaces;
 
@@ -49,46 +55,74 @@ class OSMPlacesService {
           _lastLng != null &&
           DateTime.now().difference(_lastFetch!).inMinutes < 5 &&
           _isNearby(lat, lng, _lastLat!, _lastLng!)) {
+        debugPrint('OSM: Using cached data (${_cachedPlaces.length} places)');
         return _cachedPlaces;
       }
 
       debugPrint('OSM: Fetching healthcare near $lat, $lng');
 
-      // Overpass QL query for healthcare facilities worldwide
+      // Simplified query for faster response (hospitals and clinics only)
       final query = '''
-[out:json][timeout:25];
+[out:json][timeout:15];
 (
   node["amenity"="hospital"](around:$radiusMeters,$lat,$lng);
   node["amenity"="clinic"](around:$radiusMeters,$lat,$lng);
-  node["amenity"="doctors"](around:$radiusMeters,$lat,$lng);
-  node["healthcare"="hospital"](around:$radiusMeters,$lat,$lng);
-  node["healthcare"="clinic"](around:$radiusMeters,$lat,$lng);
-  node["healthcare"="centre"](around:$radiusMeters,$lat,$lng);
-  node["healthcare"="doctor"](around:$radiusMeters,$lat,$lng);
-  node["amenity"="pharmacy"](around:$radiusMeters,$lat,$lng);
   way["amenity"="hospital"](around:$radiusMeters,$lat,$lng);
   way["amenity"="clinic"](around:$radiusMeters,$lat,$lng);
-  way["healthcare"="hospital"](around:$radiusMeters,$lat,$lng);
-  way["healthcare"="clinic"](around:$radiusMeters,$lat,$lng);
 );
 out center;
 ''';
 
-      final response = await http.post(
-        Uri.parse(_overpassUrl),
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: {'data': query},
-      ).timeout(const Duration(seconds: 30));
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final elements = data['elements'] as List? ?? [];
-
-        debugPrint('OSM: Found ${elements.length} places');
-
-        final places = <PlaceModel>[];
+      // Try multiple endpoints with retry
+      http.Response? response;
+      String? lastError;
+      
+      for (int attempt = 0; attempt < _overpassUrls.length; attempt++) {
+        final urlIndex = (_currentUrlIndex + attempt) % _overpassUrls.length;
+        final url = _overpassUrls[urlIndex];
         
-        for (final element in elements) {
+        try {
+          debugPrint('OSM: Trying endpoint ${urlIndex + 1}/${_overpassUrls.length}');
+          
+          response = await http.post(
+            Uri.parse(url),
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: {'data': query},
+          ).timeout(const Duration(seconds: 15));
+          
+          if (response.statusCode == 200) {
+            _currentUrlIndex = urlIndex; // Remember working endpoint
+            break;
+          } else {
+            lastError = 'Status ${response.statusCode}';
+            debugPrint('OSM: Endpoint $urlIndex returned ${response.statusCode}');
+          }
+        } catch (e) {
+          lastError = e.toString();
+          debugPrint('OSM: Endpoint $urlIndex failed: $e');
+        }
+      }
+
+      if (response == null || response.statusCode != 200) {
+        debugPrint('OSM: All endpoints failed. Last error: $lastError');
+        debugPrint('OSM: Using demo data as fallback');
+        return _getDemoData(lat, lng);
+      }
+
+      final data = json.decode(response.body);
+      final elements = data['elements'] as List? ?? [];
+
+      debugPrint('OSM: Found ${elements.length} places');
+
+      if (elements.isEmpty) {
+        debugPrint('OSM: No places found, using demo data');
+        return _getDemoData(lat, lng);
+      }
+
+      final places = <PlaceModel>[];
+      
+      for (final element in elements) {
+        try {
           final tags = element['tags'] as Map<String, dynamic>? ?? {};
           final name = tags['name'] ?? 
                       tags['name:en'] ?? 
@@ -117,33 +151,26 @@ out center;
             address: _buildAddress(tags),
             latitude: placeLat,
             longitude: placeLng,
-            rating: _generateMockRating(element['id']), // Mock rating for better UX
+            rating: _generateMockRating(element['id']),
             totalRatings: _generateMockReviewCount(element['id']),
             isOpen: _checkIfOpen(tags),
             types: types,
             distanceKm: distance,
           ));
+        } catch (e) {
+          debugPrint('OSM: Error parsing place: $e');
         }
-
-        // Sort by distance
-        places.sort((a, b) => (a.distanceKm ?? 999).compareTo(b.distanceKm ?? 999));
-
-        _cachedPlaces = places;
-        _lastFetch = DateTime.now();
-        _lastLat = lat;
-        _lastLng = lng;
-
-        // If no places found, return demo data based on location
-        if (places.isEmpty) {
-          debugPrint('OSM: No places found nearby, using demo data');
-          return _getDemoData(lat, lng);
-        }
-
-        return places;
-      } else {
-        debugPrint('OSM API error: ${response.statusCode}');
-        return _getDemoData(position.latitude, position.longitude);
       }
+
+      // Sort by distance
+      places.sort((a, b) => (a.distanceKm ?? 999).compareTo(b.distanceKm ?? 999));
+
+      _cachedPlaces = places;
+      _lastFetch = DateTime.now();
+      _lastLat = lat;
+      _lastLng = lng;
+
+      return places.isNotEmpty ? places : _getDemoData(lat, lng);
     } catch (e) {
       debugPrint('OSM fetch error: $e');
       final position = _locationService.currentPosition;
@@ -189,53 +216,42 @@ out center;
       types.add('pharmacy');
     }
     
-    // Add specialty if available
-    final specialty = tags['healthcare:speciality'] ?? tags['medical_system'];
-    if (specialty != null) {
-      types.add(specialty);
-    }
-    
     return types.isEmpty ? ['clinic'] : types;
   }
 
   /// Generate mock rating for better UX (deterministic based on ID)
   double? _generateMockRating(dynamic id) {
-    if (id == null) return null;
-    // Generate rating between 3.5 and 5.0 based on ID hash
+    if (id == null) return 4.0;
     final hash = id.hashCode.abs();
     return 3.5 + (hash % 16) / 10.0; // 3.5 to 5.0
   }
 
   /// Generate mock review count (deterministic based on ID)
   int _generateMockReviewCount(dynamic id) {
-    if (id == null) return 0;
+    if (id == null) return 50;
     final hash = id.hashCode.abs();
-    return 50 + (hash % 950); // 50 to 999 reviews
+    return 50 + (hash % 450); // 50 to 499 reviews
   }
 
   /// Check if place is open based on opening_hours tag
   bool _checkIfOpen(Map<String, dynamic> tags) {
-    // Simple heuristic - most healthcare facilities are open during day
     final openingHours = tags['opening_hours'];
-    if (openingHours == null) return true; // Assume open if unknown
+    if (openingHours == null) return true;
     if (openingHours == '24/7') return true;
     
     final hour = DateTime.now().hour;
-    // Assume open 8am-8pm if we can't parse
     return hour >= 8 && hour < 20;
   }
 
   String _buildAddress(Map<String, dynamic> tags) {
     final parts = <String>[];
     
-    // Street address
     if (tags['addr:housenumber'] != null && tags['addr:street'] != null) {
       parts.add('${tags['addr:housenumber']} ${tags['addr:street']}');
     } else if (tags['addr:street'] != null) {
       parts.add(tags['addr:street']);
     }
     
-    // City/town
     if (tags['addr:city'] != null) {
       parts.add(tags['addr:city']);
     } else if (tags['addr:town'] != null) {
@@ -244,20 +260,17 @@ out center;
       parts.add(tags['addr:suburb']);
     }
     
-    // District/state
     if (tags['addr:district'] != null) {
       parts.add(tags['addr:district']);
     } else if (tags['addr:state'] != null) {
       parts.add(tags['addr:state']);
     }
     
-    // Country
     if (tags['addr:country'] != null) {
       parts.add(tags['addr:country']);
     }
     
     if (parts.isEmpty) {
-      // Fallback to other location info
       if (tags['operator'] != null) return tags['operator'];
       if (tags['description'] != null) return tags['description'];
       return 'Address not available';
@@ -268,19 +281,20 @@ out center;
 
   /// Demo data when API fails or no results (location-aware)
   List<PlaceModel> _getDemoData(double? userLat, double? userLng) {
-    // If we have user location, generate nearby demo places
-    final baseLat = userLat ?? 27.7172; // Default to Kathmandu
+    final baseLat = userLat ?? 27.7172;
     final baseLng = userLng ?? 85.3240;
+    
+    debugPrint('OSM: Generating demo data near $baseLat, $baseLng');
     
     return [
       PlaceModel(
         placeId: 'demo_1',
-        name: 'General Hospital',
+        name: 'City General Hospital',
         address: 'Main Street, City Center',
         latitude: baseLat + 0.008,
         longitude: baseLng + 0.005,
         rating: 4.2,
-        totalRatings: 1250,
+        totalRatings: 328,
         isOpen: true,
         types: ['hospital'],
         distanceKm: 1.2,
@@ -292,7 +306,7 @@ out center;
         latitude: baseLat + 0.015,
         longitude: baseLng - 0.008,
         rating: 4.5,
-        totalRatings: 890,
+        totalRatings: 256,
         isOpen: true,
         types: ['hospital'],
         distanceKm: 2.1,
@@ -304,7 +318,7 @@ out center;
         latitude: baseLat - 0.012,
         longitude: baseLng + 0.018,
         rating: 4.6,
-        totalRatings: 2100,
+        totalRatings: 412,
         isOpen: true,
         types: ['hospital'],
         distanceKm: 2.8,
@@ -316,31 +330,31 @@ out center;
         latitude: baseLat + 0.003,
         longitude: baseLng - 0.004,
         rating: 4.4,
-        totalRatings: 1800,
+        totalRatings: 189,
         isOpen: true,
         types: ['clinic'],
         distanceKm: 0.6,
       ),
       PlaceModel(
         placeId: 'demo_5',
-        name: 'City Medical Clinic',
+        name: 'Family Medical Clinic',
         address: 'Downtown',
         latitude: baseLat - 0.005,
         longitude: baseLng + 0.007,
         rating: 4.3,
-        totalRatings: 950,
+        totalRatings: 145,
         isOpen: true,
         types: ['clinic'],
         distanceKm: 0.9,
       ),
       PlaceModel(
         placeId: 'demo_6',
-        name: 'Family Health Clinic',
+        name: 'Wellness Clinic',
         address: 'Residential Area',
         latitude: baseLat + 0.020,
         longitude: baseLng + 0.010,
         rating: 4.1,
-        totalRatings: 720,
+        totalRatings: 98,
         isOpen: true,
         types: ['clinic', 'doctor'],
         distanceKm: 2.5,
@@ -352,7 +366,7 @@ out center;
         latitude: baseLat - 0.025,
         longitude: baseLng - 0.015,
         rating: 4.0,
-        totalRatings: 560,
+        totalRatings: 76,
         isOpen: true,
         types: ['hospital'],
         distanceKm: 3.5,
