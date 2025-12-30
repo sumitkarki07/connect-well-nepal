@@ -18,7 +18,7 @@ class PlacesService {
   // TODO: Replace with your actual Google Places API key
   // Get your API key from: https://console.cloud.google.com/apis/credentials
   // Enable "Places API" and "Maps SDK for Android/iOS" in Google Cloud Console
-  static const String _apiKey = 'YOUR_GOOGLE_PLACES_API_KEY';
+  static const String _apiKey = 'AIzaSyC1-iHcBcLjkrv8lpKlV1tzeaBYbBptiys';
 
   static const String _baseUrl =
       'https://maps.googleapis.com/maps/api/place/nearbysearch/json';
@@ -42,7 +42,7 @@ class PlacesService {
   List<PlaceModel> get cachedHospitals => _cachedHospitals;
 
   /// Check if API key is configured
-  bool get isConfigured => _apiKey != 'YOUR_GOOGLE_PLACES_API_KEY';
+  bool get isConfigured => _apiKey != 'AIzaSyC1-iHcBcLjkrv8lpKlV1tzeaBYbBptiys';
 
   /// Fetch nearby hospitals
   Future<List<PlaceModel>> getNearbyHospitals({
