@@ -9,13 +9,14 @@ import 'package:connect_well_nepal/screens/doctor_dashboard_screen.dart';
 import 'package:connect_well_nepal/screens/ai_assistant_screen.dart';
 import 'package:connect_well_nepal/screens/all_doctors_screen.dart';
 import 'package:connect_well_nepal/screens/all_healthcare_screen.dart';
+import 'package:connect_well_nepal/screens/chat_list_screen.dart';
 import 'package:connect_well_nepal/utils/colors.dart';
 import 'package:connect_well_nepal/models/place_model.dart';
 import 'package:connect_well_nepal/services/location_service.dart';
 import 'package:connect_well_nepal/services/osm_places_service.dart';
 
 /// MainScreen - Primary navigation shell of the app
-///
+/// 
 /// This screen manages the bottom navigation bar and displays:
 /// 1. Home Tab: List of nearby clinics + quick actions
 /// 2. Appointments Tab: Manage appointments
@@ -23,7 +24,7 @@ import 'package:connect_well_nepal/services/osm_places_service.dart';
 /// 4. Profile Tab: User profile management
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
-
+  
   @override
   State<MainScreen> createState() => _MainScreenState();
 }
@@ -96,7 +97,7 @@ class _MainScreenState extends State<MainScreen> {
       }
     });
   }
-
+  
   /// Get greeting based on time of day
   String _getGreeting() {
     final hour = DateTime.now().hour;
@@ -424,24 +425,7 @@ class _MainScreenState extends State<MainScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Connect Well Nepal Logo Icon
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: Image.asset(
-                'assets/logos/logo_icon.png',
-                height: 32,
-                width: 32,
-                fit: BoxFit.cover,
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Text('Connect Well Nepal'),
-          ],
-        ),
+        title: const Text('Connect Well Nepal'),
         centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.settings_outlined),
@@ -453,6 +437,16 @@ class _MainScreenState extends State<MainScreen> {
           },
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ChatListScreen()),
+              );
+            },
+            tooltip: 'Messages',
+          ),
           IconButton(
             icon: const Icon(Icons.notifications_outlined),
             onPressed: () {
@@ -476,11 +470,11 @@ class _MainScreenState extends State<MainScreen> {
               children: [
                 // Greeting text
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${_getGreeting()},',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${_getGreeting()},',
                         style: TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.w500,
@@ -491,17 +485,17 @@ class _MainScreenState extends State<MainScreen> {
                       Text(
                         appProvider.displayName,
                         style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
                           color: isDark
                               ? Colors.white
                               : AppColors.primaryNavyBlue,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
+                  ),
+                ),
+                const SizedBox(height: 4),
                       Text(
-                        'How can we help you today?',
-                        style: TextStyle(
+                  'How can we help you today?',
+                  style: TextStyle(
                           fontSize: 14,
                           color: isDark
                               ? Colors.white54
@@ -634,9 +628,9 @@ class _MainScreenState extends State<MainScreen> {
               ),
             ),
           ),
-
+          
           const SizedBox(height: 24),
-
+          
           // Self-Care Options Section
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -649,9 +643,9 @@ class _MainScreenState extends State<MainScreen> {
               ),
             ),
           ),
-
+          
           const SizedBox(height: 12),
-
+          
           // Self-Care Cards (4 options in a row)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -659,41 +653,41 @@ class _MainScreenState extends State<MainScreen> {
               children: [
                 Expanded(
                   child: _buildSelfCareCard(
-                    icon: Icons.self_improvement,
-                    label: 'Meditation',
-                    color: Colors.purple,
-                  ),
+                  icon: Icons.self_improvement,
+                  label: 'Meditation',
+                  color: Colors.purple,
+                ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: _buildSelfCareCard(
-                    icon: Icons.fitness_center,
-                    label: 'Exercise',
-                    color: Colors.orange,
-                  ),
+                  icon: Icons.fitness_center,
+                  label: 'Exercise',
+                  color: Colors.orange,
+                ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: _buildSelfCareCard(
-                    icon: Icons.restaurant,
-                    label: 'Nutrition',
-                    color: Colors.green,
-                  ),
+                  icon: Icons.restaurant,
+                  label: 'Nutrition',
+                  color: Colors.green,
+                ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: _buildSelfCareCard(
-                    icon: Icons.psychology,
-                    label: 'Mental Health',
-                    color: Colors.blue,
+                  icon: Icons.psychology,
+                  label: 'Mental Health',
+                  color: Colors.blue,
                   ),
                 ),
               ],
             ),
           ),
-
+          
           const SizedBox(height: 24),
-
+          
           // Available Doctors Section
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -722,9 +716,9 @@ class _MainScreenState extends State<MainScreen> {
               ],
             ),
           ),
-
+          
           const SizedBox(height: 8),
-
+          
           // Doctor Cards
           _buildDoctorCard(
             name: 'Dr. Rajesh Sharma',
@@ -1116,7 +1110,7 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
   }
-
+  
   Widget _buildSelfCareCard({
     required IconData icon,
     required String label,
@@ -1125,46 +1119,46 @@ class _MainScreenState extends State<MainScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Card(
-      elevation: 2,
+        elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: InkWell(
-        onTap: () {
-          setState(() => _currentIndex = 2); // Go to Resources tab
-        },
+        child: InkWell(
+          onTap: () {
+            setState(() => _currentIndex = 2); // Go to Resources tab
+          },
         borderRadius: BorderRadius.circular(16),
-        child: Padding(
+          child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
                 padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
+                  decoration: BoxDecoration(
                   color: color.withValues(alpha: 0.15),
-                  shape: BoxShape.circle,
-                ),
+                    shape: BoxShape.circle,
+                  ),
                 child: Icon(icon, size: 28, color: color),
-              ),
+                ),
               const SizedBox(height: 10),
-              Text(
-                label,
-                textAlign: TextAlign.center,
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: isDark ? Colors.white : AppColors.textPrimary,
-                ),
+                  ),
                 maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
           ),
         ),
       ),
     );
   }
-
+  
   Widget _buildDoctorCard({
     required String name,
     required String specialty,
@@ -1208,9 +1202,9 @@ class _MainScreenState extends State<MainScreen> {
                       : AppColors.primaryNavyBlue,
                 ),
               ),
-
+              
               const SizedBox(width: 16),
-
+              
               // Doctor Info
               Expanded(
                 child: Column(
@@ -1237,7 +1231,7 @@ class _MainScreenState extends State<MainScreen> {
                             vertical: 4,
                           ),
                           decoration: BoxDecoration(
-                            color: available
+                            color: available 
                                 ? AppColors.successGreen.withValues(alpha: 0.1)
                                 : Colors.grey.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(12),
@@ -1249,8 +1243,8 @@ class _MainScreenState extends State<MainScreen> {
                                 width: 6,
                                 height: 6,
                                 decoration: BoxDecoration(
-                                  color: available
-                                      ? AppColors.successGreen
+                                  color: available 
+                                      ? AppColors.successGreen 
                                       : Colors.grey,
                                   shape: BoxShape.circle,
                                 ),
@@ -1261,8 +1255,8 @@ class _MainScreenState extends State<MainScreen> {
                                 style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w600,
-                                  color: available
-                                      ? AppColors.successGreen
+                                  color: available 
+                                      ? AppColors.successGreen 
                                       : Colors.grey,
                                 ),
                               ),
@@ -1271,9 +1265,9 @@ class _MainScreenState extends State<MainScreen> {
                         ),
                       ],
                     ),
-
+                    
                     const SizedBox(height: 4),
-
+                    
                     // Specialty
                     Text(
                       specialty,
@@ -1283,9 +1277,9 @@ class _MainScreenState extends State<MainScreen> {
                         fontWeight: FontWeight.w500,
                       ),
                     ),
-
+                    
                     const SizedBox(height: 6),
-
+                    
                     // Experience and Rating
                     Row(
                       children: [
@@ -1326,7 +1320,7 @@ class _MainScreenState extends State<MainScreen> {
                   ],
                 ),
               ),
-
+              
               // Arrow Icon
               Icon(
                 Icons.arrow_forward_ios,
@@ -1339,7 +1333,7 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
   }
-
+  
   /// Returns the appropriate widget based on selected tab
   Widget _getSelectedScreen() {
     final appProvider = context.watch<AppProvider>();
@@ -1359,7 +1353,7 @@ class _MainScreenState extends State<MainScreen> {
         return isDoctor ? const DoctorDashboardScreen() : _buildHomeTab();
     }
   }
-
+  
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -1385,47 +1379,47 @@ class _MainScreenState extends State<MainScreen> {
           size: 28,
         ),
       ),
-
+      
       // Bottom Navigation Bar
       bottomNavigationBar: Consumer<AppProvider>(
         builder: (context, appProvider, child) {
           final isDoctor = appProvider.isHealthcareProfessional;
 
           return BottomNavigationBar(
-            currentIndex: _currentIndex,
-            onTap: (index) {
-              setState(() {
-                _currentIndex = index;
-              });
-            },
-            type: BottomNavigationBarType.fixed,
+        currentIndex: _currentIndex,
+        onTap: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+        type: BottomNavigationBarType.fixed,
             selectedItemColor:
                 isDark ? const Color(0xFF5A7BC0) : AppColors.primaryNavyBlue,
             unselectedItemColor: isDark ? Colors.white54 : AppColors.textSecondary,
-            selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
+        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
             backgroundColor: isDark ? const Color(0xFF1B263B) : Colors.white,
             items: [
-              BottomNavigationBarItem(
+          BottomNavigationBarItem(
                 icon: Icon(isDoctor ? Icons.dashboard_outlined : Icons.home_outlined),
                 activeIcon: Icon(isDoctor ? Icons.dashboard : Icons.home),
                 label: isDoctor ? 'Dashboard' : 'Home',
-              ),
-              BottomNavigationBarItem(
+          ),
+          BottomNavigationBarItem(
                 icon: const Icon(Icons.calendar_today_outlined),
                 activeIcon: const Icon(Icons.calendar_today),
                 label: isDoctor ? 'Schedule' : 'Appointments',
-              ),
-              BottomNavigationBarItem(
+          ),
+          BottomNavigationBarItem(
                 icon: Icon(isDoctor ? Icons.people_outline : Icons.library_books_outlined),
                 activeIcon: Icon(isDoctor ? Icons.people : Icons.library_books),
                 label: isDoctor ? 'Patients' : 'Resources',
-              ),
+          ),
               const BottomNavigationBarItem(
-                icon: Icon(Icons.person_outline),
-                activeIcon: Icon(Icons.person),
-                label: 'Profile',
-              ),
-            ],
+            icon: Icon(Icons.person_outline),
+            activeIcon: Icon(Icons.person),
+            label: 'Profile',
+          ),
+        ],
           );
         },
       ),
