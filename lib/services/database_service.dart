@@ -14,13 +14,58 @@ class DatabaseService {
   factory DatabaseService() => _instance;
   DatabaseService._internal();
 
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  FirebaseFirestore? _db;
 
-  // Collection references
-  CollectionReference get _usersCollection => _db.collection('users');
-  CollectionReference get _appointmentsCollection => _db.collection('appointments');
-  CollectionReference get _consultationsCollection => _db.collection('consultations');
-  CollectionReference get _reviewsCollection => _db.collection('reviews');
+  /// Get Firestore instance (lazy initialization with error handling)
+  FirebaseFirestore? get _firestore {
+    if (_db == null) {
+      try {
+        _db = FirebaseFirestore.instance;
+      } catch (e) {
+        debugPrint('Firebase not initialized: $e');
+        return null;
+      }
+    }
+    return _db;
+  }
+
+  // Collection references (lazy-loaded with error handling)
+  CollectionReference get _usersCollection {
+    final db = _firestore;
+    if (db == null) {
+      throw Exception('Firebase not initialized');
+    }
+    return db.collection('users');
+  }
+  
+  CollectionReference get _appointmentsCollection {
+    final db = _firestore;
+    if (db == null) {
+      throw Exception('Firebase not initialized');
+    }
+    return db.collection('appointments');
+  }
+  
+  CollectionReference get _consultationsCollection {
+    final db = _firestore;
+    if (db == null) {
+      throw Exception('Firebase not initialized');
+    }
+    return db.collection('consultations');
+  }
+  
+  CollectionReference get _reviewsCollection {
+    final db = _firestore;
+    if (db == null) {
+      throw Exception('Firebase not initialized');
+    }
+    return db.collection('reviews');
+  }
+  
+  /// Check if Firebase is available
+  bool get isFirebaseAvailable {
+    return _firestore != null;
+  }
 
   // ============== USER OPERATIONS ==============
 
@@ -154,11 +199,22 @@ class DatabaseService {
   /// Create appointment
   Future<String> createAppointment(Map<String, dynamic> appointmentData) async {
     try {
+      // Check if Firebase is available
+      if (!isFirebaseAvailable) {
+        throw Exception('Firebase is not initialized. Cannot create appointment.');
+      }
+
       final docRef = await _appointmentsCollection.add({
         ...appointmentData,
+        'id': '', // Will be set after creation
+        'dateTime': appointmentData['appointmentTime'] ?? appointmentData['dateTime'],
         'createdAt': FieldValue.serverTimestamp(),
-        'status': 'pending',
+        'status': appointmentData['status'] ?? 'pending',
       });
+      
+      // Update with the document ID
+      await docRef.update({'id': docRef.id});
+      
       debugPrint('Appointment created: ${docRef.id}');
       return docRef.id;
     } catch (e) {
@@ -173,18 +229,75 @@ class DatabaseService {
     bool isDoctor = false,
   }) async {
     try {
+      // Don't query Firebase for guest users
+      if (userId == 'guest' || userId.isEmpty) {
+        debugPrint('Skipping Firebase query for guest user');
+        return [];
+      }
+
+      // Check if Firebase is available
+      if (!isFirebaseAvailable) {
+        debugPrint('Firebase not available, returning empty list');
+        return [];
+      }
+
       final field = isDoctor ? 'doctorId' : 'patientId';
       final querySnapshot = await _appointmentsCollection
           .where(field, isEqualTo: userId)
-          .orderBy('appointmentTime', descending: true)
+          .orderBy('dateTime', descending: false)
           .get();
 
       return querySnapshot.docs
-          .map((doc) => {'id': doc.id, ...doc.data() as Map<String, dynamic>})
+          .map((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return {
+              ...data,
+              'id': doc.id, // Ensure id is set
+            };
+          })
           .toList();
     } catch (e) {
       debugPrint('Error getting appointments: $e');
+      // Return empty list instead of throwing
       return [];
+    }
+  }
+  
+  /// Get appointment stream for real-time updates
+  Stream<List<Map<String, dynamic>>> getUserAppointmentsStream(
+    String userId, {
+    bool isDoctor = false,
+  }) {
+    try {
+      // Don't query Firebase for guest users
+      if (userId == 'guest' || userId.isEmpty) {
+        debugPrint('Skipping Firebase stream for guest user');
+        return Stream.value([]);
+      }
+
+      // Check if Firebase is available
+      if (!isFirebaseAvailable) {
+        debugPrint('Firebase not available, returning empty stream');
+        return Stream.value([]);
+      }
+
+      final field = isDoctor ? 'doctorId' : 'patientId';
+      return _appointmentsCollection
+          .where(field, isEqualTo: userId)
+          .orderBy('dateTime', descending: false)
+          .snapshots()
+          .map((snapshot) => snapshot.docs
+              .map((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                return {
+                  ...data,
+                  'id': doc.id,
+                };
+              })
+              .toList());
+    } catch (e) {
+      debugPrint('Error getting appointments stream: $e');
+      return Stream.value([]);
     }
   }
 
@@ -211,10 +324,65 @@ class DatabaseService {
       await _appointmentsCollection.doc(appointmentId).update({
         'status': 'cancelled',
         'cancellationReason': reason,
-        'cancelledAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
       });
     } catch (e) {
       debugPrint('Error cancelling appointment: $e');
+      rethrow;
+    }
+  }
+  
+  /// Reschedule appointment
+  Future<void> rescheduleAppointment(
+    String appointmentId,
+    DateTime newDateTime,
+  ) async {
+    try {
+      await _appointmentsCollection.doc(appointmentId).update({
+        'dateTime': newDateTime.toIso8601String(),
+        'appointmentTime': newDateTime.toIso8601String(),
+        'status': 'pending', // Reset to pending for doctor confirmation
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('Error rescheduling appointment: $e');
+      rethrow;
+    }
+  }
+  
+  /// Add rating and review to appointment
+  Future<void> addAppointmentRating(
+    String appointmentId,
+    double rating,
+    String? review,
+  ) async {
+    try {
+      await _appointmentsCollection.doc(appointmentId).update({
+        'rating': rating,
+        'review': review,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      
+      // Also update doctor's rating in reviews collection
+      final appointmentDoc = await _appointmentsCollection.doc(appointmentId).get();
+      if (appointmentDoc.exists) {
+        final data = appointmentDoc.data() as Map<String, dynamic>;
+        final doctorId = data['doctorId'];
+        final patientId = data['patientId'];
+        final patientName = data['patientName'] ?? 'Anonymous';
+        
+        if (doctorId != null) {
+          await addReview(
+            doctorId: doctorId,
+            patientId: patientId,
+            patientName: patientName,
+            rating: rating,
+            comment: review ?? '',
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error adding appointment rating: $e');
       rethrow;
     }
   }

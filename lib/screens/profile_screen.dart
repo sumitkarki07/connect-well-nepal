@@ -244,8 +244,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ElevatedButton(
               onPressed: () async {
                 // Capture references before popping
-                final navigator = Navigator.of(this.context);
-                final appProvider = this.context.read<AppProvider>();
+                final navigator = Navigator.of(context);
+                final appProvider = context.read<AppProvider>();
                 
                 Navigator.pop(dialogContext);
                 await appProvider.logout();

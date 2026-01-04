@@ -355,7 +355,7 @@ class _AllHealthcareScreenState extends State<AllHealthcareScreen> {
                           Icon(Icons.star, size: 14, color: Colors.amber),
                           const SizedBox(width: 4),
                           Text(
-                            '${place.rating!.toStringAsFixed(1)}',
+                            place.rating!.toStringAsFixed(1),
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w500,
