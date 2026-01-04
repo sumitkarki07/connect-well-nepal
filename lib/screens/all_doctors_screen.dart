@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:connect_well_nepal/utils/colors.dart';
+import 'package:connect_well_nepal/providers/app_provider.dart';
+import 'package:connect_well_nepal/services/chat_service.dart';
+import 'package:connect_well_nepal/screens/chat_screen.dart';
 
 /// AllDoctorsScreen - Shows all available doctors
 class AllDoctorsScreen extends StatefulWidget {
@@ -366,21 +370,41 @@ class _AllDoctorsScreenState extends State<AllDoctorsScreen> {
                             color: AppColors.primaryNavyBlue,
                           ),
                         ),
-                        ElevatedButton(
-                          onPressed: doctor['available'] ? () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Booking appointment with ${doctor['name']}...')),
-                            );
-                          } : null,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primaryNavyBlue,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                        Row(
+                          children: [
+                            // Chat button
+                            OutlinedButton.icon(
+                              onPressed: () => _startChat(doctor),
+                              icon: const Icon(Icons.chat_bubble_outline, size: 14),
+                              label: const Text('Chat', style: TextStyle(fontSize: 12)),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.primaryNavyBlue,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                side: BorderSide(color: AppColors.primaryNavyBlue),
+                              ),
                             ),
-                          ),
-                          child: const Text('Book Now', style: TextStyle(fontSize: 12)),
+                            const SizedBox(width: 8),
+                            // Book button
+                            ElevatedButton(
+                              onPressed: doctor['available'] ? () {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Booking appointment with ${doctor['name']}...')),
+                                );
+                              } : null,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primaryNavyBlue,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                              child: const Text('Book', style: TextStyle(fontSize: 12)),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -539,6 +563,48 @@ class _AllDoctorsScreenState extends State<AllDoctorsScreen> {
         );
       },
     );
+  }
+
+  /// Start a chat with a doctor
+  Future<void> _startChat(Map<String, dynamic> doctor) async {
+    final appProvider = context.read<AppProvider>();
+    final currentUser = appProvider.currentUser;
+    
+    if (currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please login to chat with doctors')),
+      );
+      return;
+    }
+
+    try {
+      final chatService = ChatService();
+      
+      // Create or get existing conversation
+      final conversation = await chatService.getOrCreateConversation(
+        patientId: currentUser.id,
+        patientName: currentUser.name,
+        patientImage: currentUser.profileImageUrl,
+        doctorId: doctor['id'] ?? 'doc_${doctor['name'].hashCode}',
+        doctorName: doctor['name'],
+        doctorSpecialty: doctor['specialty'],
+      );
+      
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ChatScreen(conversation: conversation),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error starting chat: $e')),
+        );
+      }
+    }
   }
 
   Widget _buildStat(String label, String value, IconData icon) {

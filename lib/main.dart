@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:connect_well_nepal/firebase_options.dart';
 import 'package:connect_well_nepal/providers/app_provider.dart';
 import 'package:connect_well_nepal/screens/splash_screen.dart';
 import 'package:connect_well_nepal/utils/colors.dart';
@@ -7,11 +9,19 @@ import 'package:connect_well_nepal/utils/colors.dart';
 /// Entry point of the Connect Well Nepal application
 /// 
 /// This file initializes the app:
+/// - Firebase initialization
 /// - Provider for state management
 /// - Material Design 3 theming with dark mode support
 /// - Custom color scheme
 /// - Global app configuration
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize Firebase
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  
   runApp(
     ChangeNotifierProvider(
       create: (_) => AppProvider(),
