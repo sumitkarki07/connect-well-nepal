@@ -2,7 +2,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter/foundation.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:table_calendar/table_calendar.dart';
 import '../models/appointment_model.dart';
 import '../models/doctor_model.dart';
 import '../utils/colors.dart';
@@ -12,6 +13,7 @@ import '../services/database_service.dart';
 import '../services/local_notification_service.dart';
 import 'booking_screen.dart';
 import 'doctor_profile_screen.dart';
+import 'schedule_management_screen.dart';
 
 /// Main appointments screen showing upcoming and past appointments
 /// Includes tabs for filtering and quick booking action
@@ -29,14 +31,34 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   List<Appointment> _appointments = [];
   bool _isLoading = true;
   
+  // Calendar state for doctors
+  DateTime _focusedDay = DateTime.now();
+  DateTime _selectedDay = DateTime.now();
+  
   final DatabaseService _databaseService = DatabaseService();
   final LocalNotificationService _notificationService = LocalNotificationService();
 
+  DateTime? _lastRefreshTime;
+  
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _loadAppointments();
+    _lastRefreshTime = DateTime.now();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Refresh if it's been more than 2 seconds since last refresh
+    // This prevents infinite loops but allows refresh when tab is selected
+    final now = DateTime.now();
+    if (_lastRefreshTime == null || 
+        now.difference(_lastRefreshTime!).inSeconds > 2) {
+      _lastRefreshTime = now;
+      _loadAppointments();
+    }
   }
 
   @override
@@ -71,30 +93,86 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
         isDoctor: currentUser.isDoctor,
       );
 
+      debugPrint('📋 Loading appointments for user: ${currentUser.id}, isDoctor: ${currentUser.isDoctor}');
+      debugPrint('📋 Found ${appointmentsData.length} appointment records');
+      
       _appointments = appointmentsData
           .map((data) {
             try {
+              // Ensure id is set
+              final appointmentId = data['id'] ?? '';
+              if (appointmentId.isEmpty) {
+                debugPrint('⚠️ Appointment missing id');
+                return null;
+              }
+              
               // Handle both 'dateTime' and 'appointmentTime' fields
               final dateTimeStr = data['dateTime'] ?? data['appointmentTime'];
-              if (dateTimeStr == null) return null;
+              if (dateTimeStr == null) {
+                debugPrint('⚠️ Appointment ${appointmentId} missing dateTime');
+                return null;
+              }
               
-              return Appointment.fromMap({
+              // Handle Timestamp objects from Firestore
+              final dateTimeValue = data['dateTime'] ?? data['appointmentTime'];
+              String? dateTimeStrFinal;
+              if (dateTimeValue is Timestamp) {
+                dateTimeStrFinal = dateTimeValue.toDate().toIso8601String();
+              } else if (dateTimeValue is String) {
+                dateTimeStrFinal = dateTimeValue;
+              } else {
+                debugPrint('⚠️ Invalid dateTime format for ${appointmentId}: $dateTimeValue');
+                return null;
+              }
+              
+              // Handle createdAt
+              String? createdAtStr;
+              final createdAtValue = data['createdAt'];
+              if (createdAtValue is Timestamp) {
+                createdAtStr = createdAtValue.toDate().toIso8601String();
+              } else if (createdAtValue is String) {
+                createdAtStr = createdAtValue;
+              } else {
+                createdAtStr = DateTime.now().toIso8601String();
+              }
+              
+              // Handle updatedAt
+              String? updatedAtStr;
+              final updatedAtValue = data['updatedAt'];
+              if (updatedAtValue != null) {
+                if (updatedAtValue is Timestamp) {
+                  updatedAtStr = updatedAtValue.toDate().toIso8601String();
+                } else if (updatedAtValue is String) {
+                  updatedAtStr = updatedAtValue;
+                }
+              }
+              
+              final appointment = Appointment.fromMap({
                 ...data,
-                'dateTime': dateTimeStr,
-                'createdAt': data['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
-                'updatedAt': data['updatedAt']?.toString(),
+                'id': appointmentId, // Ensure id is set
+                'dateTime': dateTimeStrFinal,
+                'appointmentTime': dateTimeStrFinal, // Ensure both are set
+                'createdAt': createdAtStr,
+                'updatedAt': updatedAtStr,
               });
+              
+              debugPrint('✅ Parsed appointment: ${appointment.id}, status: ${appointment.status}, dateTime: ${appointment.dateTime}');
+              return appointment;
             } catch (e) {
-              debugPrint('Error parsing appointment: $e');
+              debugPrint('❌ Error parsing appointment: $e');
+              debugPrint('   Data: $data');
               return null;
             }
           })
           .whereType<Appointment>()
           .toList();
+      
+      debugPrint('✅ Successfully loaded ${_appointments.length} appointments');
     } catch (e) {
-      debugPrint('Error loading appointments: $e');
-      // Fallback to sample data
-      _loadSampleAppointments();
+      debugPrint('❌ Error loading appointments: $e');
+      debugPrint('   Stack trace: ${StackTrace.current}');
+      // Don't fallback to sample data - show empty state instead
+      _appointments = [];
     } finally {
       if (mounted) {
         setState(() {
@@ -210,6 +288,9 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final appProvider = context.watch<AppProvider>();
+    final currentUser = appProvider.currentUser;
+    final isDoctor = currentUser?.isDoctor ?? false;
 
     return Scaffold(
       body: NestedScrollView(
@@ -218,7 +299,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
             SliverAppBar(
               floating: true,
               pinned: true,
-              title: const Text('Appointments'),
+              title: Text(isDoctor ? 'My Schedule' : 'Appointments'),
               centerTitle: true,
               bottom: TabBar(
                 controller: _tabController,
@@ -230,8 +311,8 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                   fontWeight: FontWeight.bold,
                   fontSize: 15,
                 ),
-                tabs: const [
-                  Tab(text: 'Upcoming'),
+                tabs: [
+                  Tab(text: isDoctor ? 'Today & Upcoming' : 'Upcoming'),
                   Tab(text: 'Past'),
                 ],
               ),
@@ -241,47 +322,67 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
         body: TabBarView(
           controller: _tabController,
           children: [
-            // Upcoming appointments
-            _buildAppointmentsList(
-              appointments: _appointments
-                  .where((apt) => apt.isUpcoming)
-                  .toList(),
-              emptyMessage: 'No upcoming appointments',
-              emptyIcon: Icons.calendar_today,
-              isDark: isDark,
-            ),
+            // For doctors: Show calendar view, for patients: Show list
+            isDoctor
+                ? _buildDoctorScheduleView(isDark)
+                : _buildAppointmentsList(
+                    appointments: _appointments
+                        .where((apt) => apt.isUpcoming)
+                        .toList(),
+                    emptyMessage: 'No upcoming appointments',
+                    emptyIcon: Icons.calendar_today,
+                    isDark: isDark,
+                    isDoctor: isDoctor,
+                  ),
             // Past appointments
             _buildAppointmentsList(
               appointments: _appointments
-                  .where((apt) => !apt.isUpcoming)
+                  .where((apt) => apt.isPast)
                   .toList(),
-              emptyMessage: 'No past appointments',
+              emptyMessage: isDoctor
+                  ? 'No past appointments'
+                  : 'No past appointments',
               emptyIcon: Icons.history,
               isDark: isDark,
+              isDoctor: isDoctor,
             ),
           ],
         ),
       ),
 
-      // Floating action button for new booking
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const BookingScreen(),
+      // Floating action button - show different for doctors vs patients
+      floatingActionButton: isDoctor
+          ? FloatingActionButton.extended(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ScheduleManagementScreen(),
+                  ),
+                );
+              },
+              backgroundColor: AppColors.primaryNavyBlue,
+              icon: const Icon(Icons.schedule),
+              label: const Text('Manage Schedule'),
+            )
+          : FloatingActionButton.extended(
+              onPressed: () async {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const BookingScreen(),
+                  ),
+                );
+                
+                // Reload appointments if booking was successful
+                if (result == true && mounted) {
+                  await _loadAppointments();
+                }
+              },
+              backgroundColor: AppColors.primaryNavyBlue,
+              icon: const Icon(Icons.add),
+              label: const Text('Book Appointment'),
             ),
-          );
-          
-          // Reload appointments if booking was successful
-          if (result == true && mounted) {
-            await _loadAppointments();
-          }
-        },
-        backgroundColor: AppColors.primaryNavyBlue,
-        icon: const Icon(Icons.add),
-        label: const Text('Book Appointment'),
-      ),
     );
   }
 
@@ -291,6 +392,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
     required String emptyMessage,
     required IconData emptyIcon,
     required bool isDark,
+    required bool isDoctor,
   }) {
     if (_isLoading) {
       return const Center(
@@ -302,8 +404,13 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
       return _buildEmptyState(emptyMessage, emptyIcon, isDark);
     }
 
-    // Sort appointments by date
-    appointments.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+    // Sort appointments by date (upcoming: ascending, past: descending)
+    if (appointments.isNotEmpty) {
+      final isUpcomingTab = appointments.first.isUpcoming;
+      appointments.sort((a, b) => isUpcomingTab 
+          ? a.dateTime.compareTo(b.dateTime) 
+          : b.dateTime.compareTo(a.dateTime));
+    }
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -317,19 +424,26 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
           
           return AppointmentCard(
             appointment: appointment,
+            isDoctorView: isDoctor,
             onTap: () {
-              _showAppointmentDetails(appointment);
+              _showAppointmentDetails(appointment, isDoctor);
             },
-            onCancel: appointment.isUpcoming
+            onCancel: appointment.isUpcoming && !isDoctor
                 ? () => _cancelAppointment(appointment)
                 : null,
-            onReschedule: appointment.isUpcoming
+            onReschedule: appointment.isUpcoming && !isDoctor
                 ? () => _rescheduleAppointment(appointment)
+                : null,
+            onAccept: appointment.isUpcoming && isDoctor && appointment.status == 'pending'
+                ? () => _acceptAppointment(appointment)
+                : null,
+            onReject: appointment.isUpcoming && isDoctor && appointment.status == 'pending'
+                ? () => _rejectAppointment(appointment)
                 : null,
             onJoin: appointment.canJoin
                 ? () => _joinConsultation(appointment)
                 : null,
-            onRate: appointment.status == 'completed' && appointment.rating == null
+            onRate: appointment.status == 'completed' && appointment.rating == null && !isDoctor
                 ? () => _rateAppointment(appointment)
                 : null,
           );
@@ -396,7 +510,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   }
 
   /// Show appointment details
-  void _showAppointmentDetails(Appointment appointment) {
+  void _showAppointmentDetails(Appointment appointment, bool isDoctor) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -440,7 +554,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                       ),
                       const SizedBox(height: 20),
                       
-                      // Doctor info
+                      // Doctor/Patient info card
                       Card(
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -452,20 +566,33 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                               CircleAvatar(
                                 radius: 30,
                                 backgroundColor:
-                                    AppColors.primaryNavyBlue.withOpacity(0.1),
-                                backgroundImage: appointment.doctorPhotoUrl != null
-                                    ? NetworkImage(appointment.doctorPhotoUrl!)
-                                    : null,
-                                child: appointment.doctorPhotoUrl == null
+                                    AppColors.primaryNavyBlue.withValues(alpha: 0.1),
+                                backgroundImage: isDoctor
+                                    ? null // Patient doesn't have photo URL in appointment
+                                    : (appointment.doctorPhotoUrl != null
+                                        ? NetworkImage(appointment.doctorPhotoUrl!)
+                                        : null),
+                                child: isDoctor
                                     ? Text(
-                                        appointment.doctorName[0].toUpperCase(),
+                                        appointment.patientName.isNotEmpty
+                                            ? appointment.patientName[0].toUpperCase()
+                                            : 'P',
                                         style: const TextStyle(
                                           fontSize: 24,
                                           color: AppColors.primaryNavyBlue,
                                           fontWeight: FontWeight.bold,
                                         ),
                                       )
-                                    : null,
+                                    : (appointment.doctorPhotoUrl == null
+                                        ? Text(
+                                            appointment.doctorName[0].toUpperCase(),
+                                            style: const TextStyle(
+                                              fontSize: 24,
+                                              color: AppColors.primaryNavyBlue,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          )
+                                        : null),
                               ),
                               const SizedBox(width: 16),
                               Expanded(
@@ -473,7 +600,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      appointment.doctorName,
+                                      isDoctor ? appointment.patientName : appointment.doctorName,
                                       style: TextStyle(
                                         fontSize: 16,
                                         fontWeight: FontWeight.bold,
@@ -483,7 +610,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                                       ),
                                     ),
                                     Text(
-                                      appointment.doctorSpecialty,
+                                      isDoctor ? 'Patient' : appointment.doctorSpecialty,
                                       style: TextStyle(
                                         fontSize: 14,
                                         color: isDark
@@ -494,25 +621,56 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                                   ],
                                 ),
                               ),
-                              IconButton(
-                                onPressed: () {
-                                  // Find doctor and show profile
-                                  final doctors = getSampleDoctors();
-                                  final doctor = doctors.firstWhere(
-                                    (d) => d.id == appointment.doctorId,
-                                  );
-                                  Navigator.pop(context);
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => DoctorProfileScreen(
-                                        doctor: doctor,
-                                      ),
-                                    ),
-                                  );
-                                },
-                                icon: const Icon(Icons.info_outline),
-                              ),
+                              if (!isDoctor)
+                                IconButton(
+                                  onPressed: () async {
+                                    // Try to get doctor from database, fallback to sample
+                                    try {
+                                      final doctorData = await _databaseService.getDoctor(appointment.doctorId);
+                                      if (doctorData != null) {
+                                        final doctor = Doctor(
+                                          id: doctorData['id'] ?? appointment.doctorId,
+                                          name: doctorData['name'] ?? appointment.doctorName,
+                                          specialization: doctorData['specialty'] ?? appointment.doctorSpecialty,
+                                          experience: doctorData['yearsOfExperience'] ?? 0,
+                                          rating: (doctorData['rating'] ?? 0).toDouble(),
+                                          photoUrl: doctorData['profileImageUrl'],
+                                          isVerified: doctorData['isVerifiedDoctor'] ?? false,
+                                          consultationFee: (doctorData['consultationFee'] ?? 500).toDouble(),
+                                        );
+                                        if (context.mounted) {
+                                          Navigator.pop(context);
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) => DoctorProfileScreen(doctor: doctor),
+                                            ),
+                                          );
+                                        }
+                                        return;
+                                      }
+                                    } catch (e) {
+                                      debugPrint('Error fetching doctor: $e');
+                                    }
+                                    
+                                    // Fallback to sample doctors
+                                    final doctors = getSampleDoctors();
+                                    final doctor = doctors.firstWhere(
+                                      (d) => d.id == appointment.doctorId,
+                                      orElse: () => doctors.first,
+                                    );
+                                    if (context.mounted) {
+                                      Navigator.pop(context);
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => DoctorProfileScreen(doctor: doctor),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  icon: const Icon(Icons.info_outline),
+                                ),
                             ],
                           ),
                         ),
@@ -570,7 +728,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
                             color: isDark
-                                ? AppColors.primaryNavyBlue.withOpacity(0.1)
+                                ? AppColors.primaryNavyBlue.withValues(alpha: 0.1)
                                 : AppColors.backgroundOffWhite,
                             borderRadius: BorderRadius.circular(8),
                           ),
@@ -604,7 +762,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
                             color: isDark
-                                ? AppColors.primaryNavyBlue.withOpacity(0.1)
+                                ? AppColors.primaryNavyBlue.withValues(alpha: 0.1)
                                 : AppColors.backgroundOffWhite,
                             borderRadius: BorderRadius.circular(8),
                           ),
@@ -698,6 +856,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
           ),
           TextButton(
             onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
               Navigator.pop(context);
               
               try {
@@ -713,23 +872,21 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                 // Reload appointments
                 await _loadAppointments();
                 
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Appointment cancelled successfully'),
-                      backgroundColor: AppColors.secondaryCrimsonRed,
-                    ),
-                  );
-                }
+                if (!mounted) return;
+                messenger.showSnackBar(
+                  const SnackBar(
+                    content: Text('Appointment cancelled successfully'),
+                    backgroundColor: AppColors.secondaryCrimsonRed,
+                  ),
+                );
               } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Error cancelling appointment: $e'),
-                      backgroundColor: AppColors.secondaryCrimsonRed,
-                    ),
-                  );
-                }
+                if (!mounted) return;
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text('Error cancelling appointment: $e'),
+                    backgroundColor: AppColors.secondaryCrimsonRed,
+                  ),
+                );
               }
             },
             child: const Text(
@@ -743,14 +900,256 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   }
 
   /// Reschedule appointment
-  void _rescheduleAppointment(Appointment appointment) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => BookingScreen(
-          preSelectedDoctor: getSampleDoctors()
-              .firstWhere((d) => d.id == appointment.doctorId),
+  void _rescheduleAppointment(Appointment appointment) async {
+    // Try to get doctor from database
+    try {
+      final doctorData = await _databaseService.getDoctor(appointment.doctorId);
+      Doctor? doctor;
+      
+      if (doctorData != null) {
+        // Parse available days
+        List<String> availableDays = doctorData['availableDays'] != null
+            ? List<String>.from(doctorData['availableDays'])
+            : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+        
+        // Parse time slots
+        List<TimeSlot> timeSlots = [];
+        if (doctorData['availableTimeStart'] != null && doctorData['availableTimeEnd'] != null) {
+          timeSlots = _generateTimeSlots(
+            doctorData['availableTimeStart'],
+            doctorData['availableTimeEnd'],
+          );
+        } else {
+          timeSlots = _getDefaultTimeSlots();
+        }
+        
+        doctor = Doctor(
+          id: doctorData['id'] ?? appointment.doctorId,
+          name: doctorData['name'] ?? appointment.doctorName,
+          specialization: doctorData['specialty'] ?? appointment.doctorSpecialty,
+          experience: doctorData['yearsOfExperience'] ?? 0,
+          rating: (doctorData['rating'] ?? 4.5).toDouble(),
+          photoUrl: doctorData['profileImageUrl'] ?? appointment.doctorPhotoUrl,
+          isVerified: doctorData['isVerifiedDoctor'] ?? false,
+          consultationFee: (doctorData['consultationFee'] ?? 500).toDouble(),
+          availableDays: availableDays,
+          timeSlots: timeSlots,
+        );
+      }
+      
+      // Fallback to sample doctors if database fetch fails
+      if (doctor == null) {
+        final sampleDoctors = getSampleDoctors();
+        doctor = sampleDoctors.firstWhere(
+          (d) => d.id == appointment.doctorId,
+          orElse: () => sampleDoctors.first,
+        );
+      }
+      
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => BookingScreen(
+              preSelectedDoctor: doctor,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error loading doctor for reschedule: $e');
+      // Fallback to sample doctors
+      final sampleDoctors = getSampleDoctors();
+      final doctor = sampleDoctors.firstWhere(
+        (d) => d.id == appointment.doctorId,
+        orElse: () => sampleDoctors.first,
+      );
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => BookingScreen(
+              preSelectedDoctor: doctor,
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Generate time slots from time range
+  List<TimeSlot> _generateTimeSlots(String startTime, String endTime) {
+    try {
+      final startParts = startTime.split(':');
+      final endParts = endTime.split(':');
+      if (startParts.length < 2 || endParts.length < 2) {
+        throw Exception('Invalid time format');
+      }
+      final startHour = int.parse(startParts[0]);
+      final startMinute = int.parse(startParts[1]);
+      final endHour = int.parse(endParts[0]);
+      final endMinute = int.parse(endParts[1]);
+      
+      final start = startHour * 60 + startMinute;
+      final end = endHour * 60 + endMinute;
+      
+      List<TimeSlot> slots = [];
+      for (int time = start; time < end; time += 30) {
+        final hour = (time ~/ 60).toString().padLeft(2, '0');
+        final minute = (time % 60).toString().padLeft(2, '0');
+        final slotStart = '$hour:$minute';
+        final slotEnd = '${((time + 30) ~/ 60).toString().padLeft(2, '0')}:${((time + 30) % 60).toString().padLeft(2, '0')}';
+        slots.add(TimeSlot(startTime: slotStart, endTime: slotEnd));
+      }
+      return slots;
+    } catch (e) {
+      debugPrint('Error generating time slots: $e');
+      return _getDefaultTimeSlots();
+    }
+  }
+
+  /// Get default time slots
+  List<TimeSlot> _getDefaultTimeSlots() {
+    return [
+      TimeSlot(startTime: '09:00', endTime: '09:30', isAvailable: true),
+      TimeSlot(startTime: '09:30', endTime: '10:00', isAvailable: true),
+      TimeSlot(startTime: '10:00', endTime: '10:30', isAvailable: true),
+      TimeSlot(startTime: '10:30', endTime: '11:00', isAvailable: true),
+      TimeSlot(startTime: '11:00', endTime: '11:30', isAvailable: true),
+      TimeSlot(startTime: '11:30', endTime: '12:00', isAvailable: true),
+      TimeSlot(startTime: '14:00', endTime: '14:30', isAvailable: true),
+      TimeSlot(startTime: '14:30', endTime: '15:00', isAvailable: true),
+      TimeSlot(startTime: '15:00', endTime: '15:30', isAvailable: true),
+      TimeSlot(startTime: '15:30', endTime: '16:00', isAvailable: true),
+      TimeSlot(startTime: '16:00', endTime: '16:30', isAvailable: true),
+      TimeSlot(startTime: '16:30', endTime: '17:00', isAvailable: true),
+    ];
+  }
+
+  /// Accept appointment (doctor only)
+  void _acceptAppointment(Appointment appointment) async {
+    final messenger = ScaffoldMessenger.of(context);
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Appointment'),
+        content: Text(
+          'Confirm appointment with ${appointment.patientName} on ${appointment.formattedDate} at ${appointment.formattedTime}?',
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              
+              try {
+                await _databaseService.updateAppointmentStatus(
+                  appointment.id,
+                  'confirmed',
+                );
+                
+                await _loadAppointments();
+                
+                if (!mounted) return;
+                messenger.showSnackBar(
+                  const SnackBar(
+                    content: Text('Appointment confirmed! Status updated to Booked.'),
+                    backgroundColor: AppColors.successGreen,
+                  ),
+                );
+              } catch (e) {
+                if (!mounted) return;
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text('Error accepting appointment: $e'),
+                    backgroundColor: AppColors.secondaryCrimsonRed,
+                  ),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.successGreen,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Accept'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Reject appointment (doctor only)
+  void _rejectAppointment(Appointment appointment) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final reasonController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reject Appointment'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Reject appointment with ${appointment.patientName}?',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: reasonController,
+              decoration: const InputDecoration(
+                labelText: 'Reason (Optional)',
+                hintText: 'Enter rejection reason...',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              
+              try {
+                await _databaseService.updateAppointmentStatus(
+                  appointment.id,
+                  'cancelled',
+                );
+                
+                await _loadAppointments();
+                
+                if (!mounted) return;
+                messenger.showSnackBar(
+                  const SnackBar(
+                    content: Text('Appointment rejected'),
+                    backgroundColor: AppColors.secondaryCrimsonRed,
+                  ),
+                );
+              } catch (e) {
+                if (!mounted) return;
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text('Error rejecting appointment: $e'),
+                    backgroundColor: AppColors.secondaryCrimsonRed,
+                  ),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.secondaryCrimsonRed,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Reject'),
+          ),
+        ],
       ),
     );
   }
@@ -838,6 +1237,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                 ),
                 ElevatedButton(
                   onPressed: () async {
+                    final messenger = ScaffoldMessenger.of(context);
                     Navigator.pop(context);
                     
                     try {
@@ -853,23 +1253,21 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
                       // Reload appointments
                       await _loadAppointments();
                       
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Thank you for your feedback!'),
-                            backgroundColor: AppColors.successGreen,
-                          ),
-                        );
-                      }
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        const SnackBar(
+                          content: Text('Thank you for your feedback!'),
+                          backgroundColor: AppColors.successGreen,
+                        ),
+                      );
                     } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Error submitting rating: $e'),
-                            backgroundColor: AppColors.secondaryCrimsonRed,
-                          ),
-                        );
-                      }
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text('Error submitting rating: $e'),
+                          backgroundColor: AppColors.secondaryCrimsonRed,
+                        ),
+                      );
                     }
                   },
                   child: const Text('Submit'),
@@ -894,5 +1292,168 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
       default:
         return type;
     }
+  }
+
+  /// Build calendar view for doctors
+  Widget _buildDoctorScheduleView(bool isDark) {
+    // Get appointments for the selected day
+    final selectedDayAppointments = _appointments.where((apt) {
+      return apt.dateTime.year == _selectedDay.year &&
+          apt.dateTime.month == _selectedDay.month &&
+          apt.dateTime.day == _selectedDay.day;
+    }).toList();
+    
+    return Column(
+      children: [
+        // Calendar
+        Card(
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TableCalendar(
+              firstDay: DateTime.now().subtract(const Duration(days: 30)),
+              lastDay: DateTime.now().add(const Duration(days: 365)),
+              focusedDay: _focusedDay,
+              selectedDayPredicate: (day) {
+                return isSameDay(_selectedDay, day);
+              },
+              onDaySelected: (selectedDay, focusedDay) {
+                if (mounted) {
+                  setState(() {
+                    _selectedDay = selectedDay;
+                    _focusedDay = focusedDay;
+                  });
+                }
+              },
+              onPageChanged: (focusedDay) {
+                if (mounted) {
+                  setState(() {
+                    _focusedDay = focusedDay;
+                  });
+                }
+              },
+              calendarFormat: CalendarFormat.month,
+              startingDayOfWeek: StartingDayOfWeek.monday,
+              eventLoader: (day) {
+                return _appointments.where((apt) {
+                  return apt.dateTime.year == day.year &&
+                      apt.dateTime.month == day.month &&
+                      apt.dateTime.day == day.day;
+                }).map((apt) => apt.id).toList();
+              },
+              calendarStyle: CalendarStyle(
+                outsideDaysVisible: false,
+                weekendTextStyle: TextStyle(
+                  color: isDark ? Colors.grey[400] : AppColors.textSecondary,
+                ),
+                defaultTextStyle: TextStyle(
+                  color: isDark ? Colors.white : AppColors.textPrimary,
+                ),
+                selectedDecoration: BoxDecoration(
+                  color: AppColors.primaryNavyBlue,
+                  shape: BoxShape.circle,
+                ),
+                todayDecoration: BoxDecoration(
+                  color: AppColors.primaryNavyBlue.withValues(alpha: 0.3),
+                  shape: BoxShape.circle,
+                ),
+                markerDecoration: BoxDecoration(
+                  color: AppColors.secondaryCrimsonRed,
+                  shape: BoxShape.circle,
+                ),
+                markersMaxCount: 3,
+                disabledTextStyle: TextStyle(
+                  color: isDark ? Colors.grey[700] : Colors.grey[300],
+                ),
+              ),
+              headerStyle: HeaderStyle(
+                formatButtonVisible: true,
+                titleCentered: true,
+                titleTextStyle: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : AppColors.textPrimary,
+                ),
+                leftChevronIcon: Icon(
+                  Icons.chevron_left,
+                  color: isDark ? Colors.white : AppColors.textPrimary,
+                ),
+                rightChevronIcon: Icon(
+                  Icons.chevron_right,
+                  color: isDark ? Colors.white : AppColors.textPrimary,
+                ),
+              ),
+              daysOfWeekStyle: DaysOfWeekStyle(
+                weekdayStyle: TextStyle(
+                  color: isDark ? Colors.grey[400] : AppColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+                weekendStyle: TextStyle(
+                  color: isDark ? Colors.grey[400] : AppColors.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ),
+        
+        // Appointments for selected day
+        Expanded(
+          child: selectedDayAppointments.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.calendar_today_outlined,
+                        size: 64,
+                        color: isDark ? Colors.white24 : Colors.grey[300],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'No appointments on ${_formatDate(_selectedDay)}',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: isDark ? Colors.white54 : AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: selectedDayAppointments.length,
+                  itemBuilder: (context, index) {
+                    final appointment = selectedDayAppointments[index];
+                    return AppointmentCard(
+                      appointment: appointment,
+                      isDoctorView: true,
+                      onTap: () {
+                        _showAppointmentDetails(appointment, true);
+                      },
+                      onAccept: appointment.status == 'pending'
+                          ? () => _acceptAppointment(appointment)
+                          : null,
+                      onReject: appointment.status == 'pending'
+                          ? () => _rejectAppointment(appointment)
+                          : null,
+                      onJoin: appointment.canJoin
+                          ? () => _joinConsultation(appointment)
+                          : null,
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
   }
 }

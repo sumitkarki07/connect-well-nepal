@@ -164,7 +164,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         });
 
         // Update profile image via AppProvider
+        // Capture context-dependent objects before async operation
+        // ignore: use_build_context_synchronously
         final appProvider = context.read<AppProvider>();
+        // ignore: use_build_context_synchronously
+        final messenger = ScaffoldMessenger.of(context);
         await appProvider.updateProfileImage(pickedFile.path);
 
         if (mounted) {
@@ -172,7 +176,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _isUploadingImage = false;
           });
 
-          ScaffoldMessenger.of(context).showSnackBar(
+          messenger.showSnackBar(
             const SnackBar(
               content: Text('Profile picture updated!'),
               backgroundColor: AppColors.successGreen,
@@ -186,7 +190,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       });
       
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(
           SnackBar(
             content: Text('Failed to update picture: $e'),
             backgroundColor: AppColors.secondaryCrimsonRed,
@@ -426,6 +431,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   color: isDark ? Colors.white54 : AppColors.textSecondary,
                 ),
               ),
+              
+              // Verified Badge (at bottom of profile picture area)
+              if (user?.isVerifiedDoctor == true) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.successGreen.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: AppColors.successGreen,
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.verified,
+                        color: AppColors.successGreen,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Verified Professional',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.successGreen,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               
               const SizedBox(height: 24),
               

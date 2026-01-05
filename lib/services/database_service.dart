@@ -172,6 +172,29 @@ class DatabaseService {
   }
 
   /// Get doctors by specialty
+  /// Get a single doctor by ID
+  Future<Map<String, dynamic>?> getDoctor(String doctorId) async {
+    try {
+      if (!isFirebaseAvailable) {
+        debugPrint('Firebase not available, cannot get doctor');
+        return null;
+      }
+
+      final doc = await _usersCollection.doc(doctorId).get();
+      if (doc.exists) {
+        final data = doc.data() as Map<String, dynamic>;
+        return {
+          ...data,
+          'id': doc.id,
+        };
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Error getting doctor: $e');
+      return null;
+    }
+  }
+
   Future<List<UserModel>> getDoctorsBySpecialty(String specialty) async {
     try {
       final querySnapshot = await _usersCollection
@@ -230,10 +253,27 @@ class DatabaseService {
         throw Exception('Firebase is not initialized. Cannot create appointment.');
       }
 
+      // Normalize dateTime field (use appointmentTime if provided, otherwise dateTime)
+      final dateTime = appointmentData['appointmentTime'] ?? appointmentData['dateTime'];
+      if (dateTime == null) {
+        throw Exception('Missing appointmentTime or dateTime in appointment data');
+      }
+
+      // Convert to Timestamp for proper Firestore querying
+      DateTime dateTimeObj;
+      if (dateTime is DateTime) {
+        dateTimeObj = dateTime;
+      } else if (dateTime is String) {
+        dateTimeObj = DateTime.parse(dateTime);
+      } else {
+        throw Exception('Invalid dateTime format');
+      }
+
       final docRef = await _appointmentsCollection.add({
         ...appointmentData,
         'id': '', // Will be set after creation
-        'dateTime': appointmentData['appointmentTime'] ?? appointmentData['dateTime'],
+        'dateTime': Timestamp.fromDate(dateTimeObj), // Store as Timestamp for proper querying
+        'appointmentTime': Timestamp.fromDate(dateTimeObj), // Also store as appointmentTime for backward compatibility
         'createdAt': FieldValue.serverTimestamp(),
         'status': appointmentData['status'] ?? 'pending',
       });
@@ -241,10 +281,10 @@ class DatabaseService {
       // Update with the document ID
       await docRef.update({'id': docRef.id});
       
-      debugPrint('Appointment created: ${docRef.id}');
+      debugPrint('✅ Appointment created: ${docRef.id}');
       return docRef.id;
     } catch (e) {
-      debugPrint('Error creating appointment: $e');
+      debugPrint('❌ Error creating appointment: $e');
       rethrow;
     }
   }
@@ -268,20 +308,54 @@ class DatabaseService {
       }
 
       final field = isDoctor ? 'doctorId' : 'patientId';
-      final querySnapshot = await _appointmentsCollection
-          .where(field, isEqualTo: userId)
-          .orderBy('dateTime', descending: false)
-          .get();
+      
+      debugPrint('🔍 Querying appointments for $field: $userId');
+      
+      Query query = _appointmentsCollection.where(field, isEqualTo: userId);
+      
+      // Try to order by dateTime, but handle case where index might not exist
+      try {
+        query = query.orderBy('dateTime', descending: false);
+      } catch (e) {
+        debugPrint('⚠️ Could not order by dateTime (index may be missing): $e');
+        // Continue without ordering - we'll sort in memory
+      }
+      
+      final querySnapshot = await query.get();
+      
+      debugPrint('✅ Found ${querySnapshot.docs.length} appointments');
 
-      return querySnapshot.docs
+      final results = querySnapshot.docs
           .map((doc) {
             final data = doc.data() as Map<String, dynamic>;
+            // Ensure both dateTime and appointmentTime are set for compatibility
+            final dateTime = data['dateTime'] ?? data['appointmentTime'];
             return {
               ...data,
               'id': doc.id, // Ensure id is set
+              'dateTime': dateTime, // Normalize to dateTime
+              'appointmentTime': dateTime, // Also set appointmentTime for backward compatibility
             };
           })
           .toList();
+      
+      // Sort in memory if we couldn't order by dateTime
+      try {
+        results.sort((a, b) {
+          final aTime = a['dateTime'];
+          final bTime = b['dateTime'];
+          if (aTime is Timestamp && bTime is Timestamp) {
+            return aTime.compareTo(bTime);
+          } else if (aTime is String && bTime is String) {
+            return DateTime.parse(aTime).compareTo(DateTime.parse(bTime));
+          }
+          return 0;
+        });
+      } catch (e) {
+        debugPrint('⚠️ Error sorting appointments: $e');
+      }
+      
+      return results;
     } catch (e) {
       debugPrint('Error getting appointments: $e');
       // Return empty list instead of throwing
@@ -315,9 +389,13 @@ class DatabaseService {
           .map((snapshot) => snapshot.docs
               .map((doc) {
                 final data = doc.data() as Map<String, dynamic>;
+                // Ensure both dateTime and appointmentTime are set for compatibility
+                final dateTime = data['dateTime'] ?? data['appointmentTime'];
                 return {
                   ...data,
                   'id': doc.id,
+                  'dateTime': dateTime, // Normalize to dateTime
+                  'appointmentTime': dateTime, // Also set appointmentTime for backward compatibility
                 };
               })
               .toList());
@@ -364,14 +442,16 @@ class DatabaseService {
     DateTime newDateTime,
   ) async {
     try {
+      final dateTimeStr = newDateTime.toIso8601String();
       await _appointmentsCollection.doc(appointmentId).update({
-        'dateTime': newDateTime.toIso8601String(),
-        'appointmentTime': newDateTime.toIso8601String(),
+        'dateTime': dateTimeStr, // Primary field
+        'appointmentTime': dateTimeStr, // Backward compatibility
         'status': 'pending', // Reset to pending for doctor confirmation
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      debugPrint('✅ Appointment rescheduled: $appointmentId');
     } catch (e) {
-      debugPrint('Error rescheduling appointment: $e');
+      debugPrint('❌ Error rescheduling appointment: $e');
       rethrow;
     }
   }
@@ -503,7 +583,7 @@ class DatabaseService {
 
       final totalRating = reviews.fold<double>(
         0,
-        (sum, review) => sum + (review['rating'] as double),
+        (total, review) => total + (review['rating'] as double),
       );
       final averageRating = totalRating / reviews.length;
 

@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/doctor_model.dart';
 import '../widgets/time_selector.dart';
 import '../utils/colors.dart';
@@ -40,6 +41,9 @@ class _BookingScreenState extends State<BookingScreen> {
   
   final DatabaseService _databaseService = DatabaseService();
   final LocalNotificationService _notificationService = LocalNotificationService();
+  
+  // Track booked time slots for the selected doctor and date
+  List<String> _bookedTimeSlots = [];
 
   @override
   void initState() {
@@ -47,6 +51,60 @@ class _BookingScreenState extends State<BookingScreen> {
     _selectedDoctor = widget.preSelectedDoctor;
     if (_selectedDoctor != null) {
       _currentStep = 1; // Skip doctor selection if pre-selected
+      _loadBookedTimeSlots();
+    }
+  }
+  
+  /// Load booked time slots for the selected doctor and date
+  Future<void> _loadBookedTimeSlots() async {
+    if (_selectedDoctor == null) return;
+    
+    try {
+      // Get all appointments for this doctor
+      final appointmentsData = await _databaseService.getUserAppointments(
+        _selectedDoctor!.id,
+        isDoctor: true,
+      );
+      
+      // Filter appointments for the selected date
+      final selectedDateStr = '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}';
+      
+      _bookedTimeSlots = [];
+      for (final aptData in appointmentsData) {
+        try {
+          final dateTimeStr = aptData['dateTime'] ?? aptData['appointmentTime'];
+          if (dateTimeStr == null) continue;
+          
+          DateTime aptDateTime;
+          if (dateTimeStr is Timestamp) {
+            aptDateTime = dateTimeStr.toDate();
+          } else if (dateTimeStr is String) {
+            aptDateTime = DateTime.parse(dateTimeStr);
+          } else {
+            continue;
+          }
+          
+          // Check if appointment is on the selected date
+          final aptDateStr = '${aptDateTime.year}-${aptDateTime.month.toString().padLeft(2, '0')}-${aptDateTime.day.toString().padLeft(2, '0')}';
+          if (aptDateStr == selectedDateStr) {
+            // Only mark as booked if status is pending or confirmed
+            final status = aptData['status'] ?? 'pending';
+            if (status == 'pending' || status == 'confirmed') {
+              final hour = aptDateTime.hour.toString().padLeft(2, '0');
+              final minute = aptDateTime.minute.toString().padLeft(2, '0');
+              _bookedTimeSlots.add('$hour:$minute');
+            }
+          }
+        } catch (e) {
+          debugPrint('Error parsing appointment date: $e');
+        }
+      }
+      
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('Error loading booked time slots: $e');
     }
   }
 
@@ -186,30 +244,82 @@ class _BookingScreenState extends State<BookingScreen> {
 
   /// Step 1: Doctor Selection (if not pre-selected)
   Widget _buildDoctorSelectionStep(bool isDark) {
-    final doctors = getSampleDoctors();
+    return FutureBuilder<List<Doctor>>(
+      future: _loadDoctors(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Text(
-          'Select a Doctor',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: isDark ? Colors.white : AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Choose from available healthcare providers',
-          style: TextStyle(
-            fontSize: 14,
-            color: isDark ? Colors.grey[400] : AppColors.textSecondary,
-          ),
-        ),
-        const SizedBox(height: 20),
-        
-        ...doctors.where((d) => d.isAvailable && d.isVerified).map((doctor) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
+                const SizedBox(height: 16),
+                Text('Error loading doctors'),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => setState(() {}),
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final doctors = snapshot.data ?? [];
+
+        if (doctors.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.people_outline, size: 64, color: isDark ? Colors.white24 : Colors.grey[300]),
+                const SizedBox(height: 16),
+                Text(
+                  'No doctors available',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: isDark ? Colors.white54 : AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Please check back later',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: isDark ? Colors.white38 : AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text(
+              'Select a Doctor',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: isDark ? Colors.white : AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Choose from available healthcare providers',
+              style: TextStyle(
+                fontSize: 14,
+                color: isDark ? Colors.grey[400] : AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 20),
+            
+            ...doctors.map((doctor) {
           return Card(
             margin: const EdgeInsets.only(bottom: 12),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -227,7 +337,7 @@ class _BookingScreenState extends State<BookingScreen> {
                   children: [
                     CircleAvatar(
                       radius: 32,
-                      backgroundColor: AppColors.primaryNavyBlue.withOpacity(0.1),
+                      backgroundColor: AppColors.primaryNavyBlue.withValues(alpha: 0.1),
                       backgroundImage: doctor.photoUrl != null 
                           ? NetworkImage(doctor.photoUrl!) 
                           : null,
@@ -292,8 +402,99 @@ class _BookingScreenState extends State<BookingScreen> {
             ),
           );
         }),
-      ],
+          ],
+        );
+      },
     );
+  }
+
+  /// Load doctors from database
+  Future<List<Doctor>> _loadDoctors() async {
+    try {
+      final doctors = await _databaseService.getVerifiedDoctors();
+      
+      // Convert UserModel to Doctor model
+      return doctors.map((user) {
+        // Parse available days
+        List<String> availableDays = [];
+        if (user.availableDays != null) {
+          availableDays = user.availableDays!;
+        } else {
+          // Default to weekdays if not specified
+          availableDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+        }
+        
+        // Parse time slots from available time range
+        List<TimeSlot> timeSlots = [];
+        if (user.availableTimeStart != null && user.availableTimeEnd != null) {
+          timeSlots = _generateTimeSlots(
+            user.availableTimeStart!,
+            user.availableTimeEnd!,
+          );
+        } else {
+          timeSlots = _getDefaultTimeSlots();
+        }
+        
+        return Doctor(
+          id: user.id,
+          name: user.name,
+          specialization: user.specialty ?? 'General Physician',
+          experience: user.yearsOfExperience ?? 0,
+          rating: 4.5, // Default rating, should be calculated from reviews
+          photoUrl: user.profileImageUrl,
+          isVerified: user.isVerifiedDoctor,
+          bio: user.bio,
+          qualifications: user.qualification != null ? [user.qualification!] : null,
+          clinicName: user.hospitalAffiliation,
+          languages: ['English', 'Nepali'], // Default, should be stored in user model
+          availableDays: availableDays,
+          timeSlots: timeSlots,
+          totalReviews: 0, // Should be calculated from reviews
+          consultationFee: user.consultationFee ?? 500.0,
+          isAvailable: true,
+          isAvailableNow: user.isAvailableNow,
+        );
+      }).toList();
+    } catch (e) {
+      debugPrint('Error loading doctors: $e');
+      // Fallback to sample doctors
+      return getSampleDoctors();
+    }
+  }
+
+  /// Generate time slots from time range
+  List<TimeSlot> _generateTimeSlots(String startTime, String endTime) {
+    try {
+      final startParts = startTime.split(':');
+      final endParts = endTime.split(':');
+      if (startParts.length < 2 || endParts.length < 2) {
+        throw Exception('Invalid time format');
+      }
+      final startHour = int.parse(startParts[0]);
+      final startMinute = int.parse(startParts[1]);
+      final endHour = int.parse(endParts[0]);
+      final endMinute = int.parse(endParts[1]);
+      
+      final start = startHour * 60 + startMinute;
+      final end = endHour * 60 + endMinute;
+      
+      List<TimeSlot> slots = [];
+      for (int time = start; time < end; time += 30) {
+        final hour = (time ~/ 60).toString().padLeft(2, '0');
+        final minute = (time % 60).toString().padLeft(2, '0');
+        final slotStart = '$hour:$minute';
+        final slotEnd = '${((time + 30) ~/ 60).toString().padLeft(2, '0')}:${((time + 30) % 60).toString().padLeft(2, '0')}';
+        slots.add(TimeSlot(
+          startTime: slotStart,
+          endTime: slotEnd,
+          isAvailable: true, // Explicitly set as available
+        ));
+      }
+      return slots;
+    } catch (e) {
+      debugPrint('Error generating time slots: $e');
+      return _getDefaultTimeSlots();
+    }
   }
 
   /// Step 2: Date Selection
@@ -340,6 +541,10 @@ class _BookingScreenState extends State<BookingScreen> {
                     _focusedDay = focusedDay;
                     _selectedTimeSlot = null; // Reset time slot
                   });
+                  // Reload booked time slots for the new date
+                  if (_selectedDoctor != null) {
+                    _loadBookedTimeSlots();
+                  }
                 }
               },
               onPageChanged: (focusedDay) {
@@ -369,7 +574,7 @@ class _BookingScreenState extends State<BookingScreen> {
                   shape: BoxShape.circle,
                 ),
                 todayDecoration: BoxDecoration(
-                  color: AppColors.primaryNavyBlue.withOpacity(0.3),
+                  color: AppColors.primaryNavyBlue.withValues(alpha: 0.3),
                   shape: BoxShape.circle,
                 ),
                 markerDecoration: BoxDecoration(
@@ -416,7 +621,7 @@ class _BookingScreenState extends State<BookingScreen> {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: AppColors.primaryNavyBlue.withOpacity(0.1),
+            color: AppColors.primaryNavyBlue.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Row(
@@ -459,6 +664,9 @@ class _BookingScreenState extends State<BookingScreen> {
 
   /// Step 3: Time Selection
   Widget _buildTimeSelectionStep(bool isDark) {
+    // If doctor is available now, show immediate booking option
+    final canBookNow = _selectedDoctor?.isAvailableNow ?? false;
+    
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -472,7 +680,9 @@ class _BookingScreenState extends State<BookingScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Choose an available time slot',
+          canBookNow
+              ? 'Doctor is available now! You can book immediately or choose a time slot'
+              : 'Choose an available time slot',
           style: TextStyle(
             fontSize: 14,
             color: isDark ? Colors.grey[400] : AppColors.textSecondary,
@@ -480,9 +690,87 @@ class _BookingScreenState extends State<BookingScreen> {
         ),
         const SizedBox(height: 20),
         
+        // Immediate booking option
+        if (canBookNow) ...[
+          Card(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            color: AppColors.successGreen.withValues(alpha: 0.1),
+            child: InkWell(
+              onTap: () {
+                setState(() {
+                  _selectedTimeSlot = TimeSlot(
+                    startTime: DateTime.now().toString().substring(11, 16),
+                    endTime: DateTime.now().add(const Duration(minutes: 30)).toString().substring(11, 16),
+                    isAvailable: true,
+                  );
+                  _selectedDate = DateTime.now();
+                });
+              },
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.successGreen,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.flash_on,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Book Now',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: isDark ? Colors.white : AppColors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Start consultation immediately',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark ? Colors.white70 : AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      _selectedTimeSlot != null && _selectedTimeSlot!.startTime == DateTime.now().toString().substring(11, 16)
+                          ? Icons.check_circle
+                          : Icons.radio_button_unchecked,
+                      color: AppColors.successGreen,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Divider(
+            color: isDark ? Colors.white24 : Colors.grey[300],
+          ),
+          const SizedBox(height: 16),
+        ],
+        
+        // Time slots selector
         if (_selectedDoctor != null)
           TimeSlotSelector(
-            timeSlots: _selectedDoctor!.timeSlots,
+            timeSlots: _getAvailableTimeSlots(),
             selectedDate: _selectedDate,
             selectedSlot: _selectedTimeSlot,
             onSlotSelected: (slot) {
@@ -598,7 +886,7 @@ class _BookingScreenState extends State<BookingScreen> {
             color: isSelected
                 ? AppColors.primaryNavyBlue
                 : isDark
-                    ? AppColors.primaryNavyBlue.withOpacity(0.1)
+                    ? AppColors.primaryNavyBlue.withValues(alpha: 0.1)
                     : AppColors.backgroundOffWhite,
             border: Border.all(
               color: isSelected
@@ -722,7 +1010,7 @@ class _BookingScreenState extends State<BookingScreen> {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: AppColors.primaryNavyBlue.withOpacity(0.1),
+            color: AppColors.primaryNavyBlue.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Row(
@@ -817,7 +1105,7 @@ class _BookingScreenState extends State<BookingScreen> {
         color: isDark ? const Color(0xFF1E2A3A) : Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withValues(alpha: 0.1),
             blurRadius: 10,
             offset: const Offset(0, -2),
           ),
@@ -908,6 +1196,15 @@ class _BookingScreenState extends State<BookingScreen> {
   Future<void> _handleNext() async {
     final totalSteps = _selectedDoctor != null ? 4 : 5;
     
+    // Load booked time slots when moving to date/time selection steps
+    if (_currentStep == 0 && _selectedDoctor != null) {
+      // Moving from doctor selection to date selection
+      await _loadBookedTimeSlots();
+    } else if (_currentStep == 1 && _selectedDoctor != null) {
+      // Moving from date selection to time selection
+      await _loadBookedTimeSlots();
+    }
+    
     if (_currentStep == totalSteps - 1) {
       // Last step - book appointment
       await _bookAppointment();
@@ -923,7 +1220,8 @@ class _BookingScreenState extends State<BookingScreen> {
   Future<void> _bookAppointment() async {
     if (_selectedDoctor == null || _selectedTimeSlot == null) return;
     
-    if (!_formKey.currentState!.validate()) {
+    // Validate form if form key is available
+    if (_formKey.currentState != null && !_formKey.currentState!.validate()) {
       // Go back to details step if validation fails
       setState(() {
         _currentStep = _selectedDoctor != null ? 2 : 3;
@@ -959,6 +1257,9 @@ class _BookingScreenState extends State<BookingScreen> {
 
       // Combine date and time
       final timeParts = _selectedTimeSlot!.startTime.split(':');
+      if (timeParts.length < 2) {
+        throw Exception('Invalid time slot format');
+      }
       final appointmentDateTime = DateTime(
         _selectedDate.year,
         _selectedDate.month,
@@ -967,7 +1268,8 @@ class _BookingScreenState extends State<BookingScreen> {
         int.parse(timeParts[1]),
       );
 
-      // Create appointment data
+      // Create appointment data (use both dateTime and appointmentTime for compatibility)
+      final dateTimeStr = appointmentDateTime.toIso8601String();
       final appointmentData = {
         'patientId': currentUser.id,
         'patientName': currentUser.name,
@@ -975,7 +1277,8 @@ class _BookingScreenState extends State<BookingScreen> {
         'doctorName': _selectedDoctor!.name,
         'doctorPhotoUrl': _selectedDoctor!.photoUrl,
         'doctorSpecialty': _selectedDoctor!.specialization,
-        'appointmentTime': appointmentDateTime.toIso8601String(),
+        'dateTime': dateTimeStr, // Primary field
+        'appointmentTime': dateTimeStr, // Backward compatibility
         'type': _selectedConsultationType,
         'status': 'pending',
         'symptoms': _symptomsController.text.trim(),
@@ -984,23 +1287,34 @@ class _BookingScreenState extends State<BookingScreen> {
       };
 
       // Save to Firebase
+      debugPrint('💾 Saving appointment to Firebase...');
       final appointmentId = await _databaseService.createAppointment(appointmentData);
+      debugPrint('✅ Appointment saved with ID: $appointmentId');
 
       // Schedule notification reminders
-      await _notificationService.initialize();
-      await _notificationService.scheduleAppointmentReminders(
-        appointmentId: appointmentId,
-        doctorName: _selectedDoctor!.name,
-        appointmentDateTime: appointmentDateTime,
-      );
+      try {
+        await _notificationService.initialize();
+        await _notificationService.scheduleAppointmentReminders(
+          appointmentId: appointmentId,
+          doctorName: _selectedDoctor!.name,
+          appointmentDateTime: appointmentDateTime,
+        );
+      } catch (e) {
+        debugPrint('⚠️ Error scheduling notifications: $e');
+        // Don't fail the booking if notifications fail
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Appointment booked successfully!'),
             backgroundColor: AppColors.successGreen,
+            duration: Duration(seconds: 2),
           ),
         );
+        
+        // Wait a moment before navigating to ensure data is saved
+        await Future.delayed(const Duration(milliseconds: 500));
         
         Navigator.of(context).pop(true); // Return true to indicate success
       }
@@ -1064,21 +1378,34 @@ class _BookingScreenState extends State<BookingScreen> {
     ];
   }
   
+  /// Get available time slots (filter out booked ones)
+  List<TimeSlot> _getAvailableTimeSlots() {
+    final allSlots = _selectedDoctor?.timeSlots.isNotEmpty == true
+        ? _selectedDoctor!.timeSlots
+        : _getDefaultTimeSlots();
+    
+    // Mark booked slots as unavailable
+    return allSlots.map((slot) {
+      final isBooked = _bookedTimeSlots.contains(slot.startTime);
+      return slot.copyWith(isAvailable: !isBooked);
+    }).toList();
+  }
+
   /// Get default time slots
   List<TimeSlot> _getDefaultTimeSlots() {
     return [
-      TimeSlot(startTime: '09:00', endTime: '09:30'),
-      TimeSlot(startTime: '09:30', endTime: '10:00'),
-      TimeSlot(startTime: '10:00', endTime: '10:30'),
-      TimeSlot(startTime: '10:30', endTime: '11:00'),
-      TimeSlot(startTime: '11:00', endTime: '11:30'),
-      TimeSlot(startTime: '11:30', endTime: '12:00'),
-      TimeSlot(startTime: '14:00', endTime: '14:30'),
-      TimeSlot(startTime: '14:30', endTime: '15:00'),
-      TimeSlot(startTime: '15:00', endTime: '15:30'),
-      TimeSlot(startTime: '15:30', endTime: '16:00'),
-      TimeSlot(startTime: '16:00', endTime: '16:30'),
-      TimeSlot(startTime: '16:30', endTime: '17:00'),
+      TimeSlot(startTime: '09:00', endTime: '09:30', isAvailable: true),
+      TimeSlot(startTime: '09:30', endTime: '10:00', isAvailable: true),
+      TimeSlot(startTime: '10:00', endTime: '10:30', isAvailable: true),
+      TimeSlot(startTime: '10:30', endTime: '11:00', isAvailable: true),
+      TimeSlot(startTime: '11:00', endTime: '11:30', isAvailable: true),
+      TimeSlot(startTime: '11:30', endTime: '12:00', isAvailable: true),
+      TimeSlot(startTime: '14:00', endTime: '14:30', isAvailable: true),
+      TimeSlot(startTime: '14:30', endTime: '15:00', isAvailable: true),
+      TimeSlot(startTime: '15:00', endTime: '15:30', isAvailable: true),
+      TimeSlot(startTime: '15:30', endTime: '16:00', isAvailable: true),
+      TimeSlot(startTime: '16:00', endTime: '16:30', isAvailable: true),
+      TimeSlot(startTime: '16:30', endTime: '17:00', isAvailable: true),
     ];
   }
 
