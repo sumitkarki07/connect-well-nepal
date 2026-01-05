@@ -1,0 +1,898 @@
+// lib/screens/appointments_screen.dart
+
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter/foundation.dart';
+import '../models/appointment_model.dart';
+import '../models/doctor_model.dart';
+import '../utils/colors.dart';
+import '../widgets/appointment_card.dart';
+import '../providers/app_provider.dart';
+import '../services/database_service.dart';
+import '../services/local_notification_service.dart';
+import 'booking_screen.dart';
+import 'doctor_profile_screen.dart';
+
+/// Main appointments screen showing upcoming and past appointments
+/// Includes tabs for filtering and quick booking action
+class AppointmentsScreen extends StatefulWidget {
+  const AppointmentsScreen({super.key});
+
+  @override
+  State<AppointmentsScreen> createState() => _AppointmentsScreenState();
+}
+
+class _AppointmentsScreenState extends State<AppointmentsScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  
+  List<Appointment> _appointments = [];
+  bool _isLoading = true;
+  
+  final DatabaseService _databaseService = DatabaseService();
+  final LocalNotificationService _notificationService = LocalNotificationService();
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _loadAppointments();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  /// Load appointments from Firebase
+  Future<void> _loadAppointments() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final appProvider = context.read<AppProvider>();
+      final currentUser = appProvider.currentUser;
+      
+      // Check if user is null or guest - use sample data
+      if (currentUser == null || currentUser.isGuest || currentUser.id == 'guest') {
+        // Load sample appointments for guests or when not logged in
+        _loadSampleAppointments();
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // Load from Firebase only for authenticated users
+      final appointmentsData = await _databaseService.getUserAppointments(
+        currentUser.id,
+        isDoctor: currentUser.isDoctor,
+      );
+
+      _appointments = appointmentsData
+          .map((data) {
+            try {
+              // Handle both 'dateTime' and 'appointmentTime' fields
+              final dateTimeStr = data['dateTime'] ?? data['appointmentTime'];
+              if (dateTimeStr == null) return null;
+              
+              return Appointment.fromMap({
+                ...data,
+                'dateTime': dateTimeStr,
+                'createdAt': data['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
+                'updatedAt': data['updatedAt']?.toString(),
+              });
+            } catch (e) {
+              debugPrint('Error parsing appointment: $e');
+              return null;
+            }
+          })
+          .whereType<Appointment>()
+          .toList();
+    } catch (e) {
+      debugPrint('Error loading appointments: $e');
+      // Fallback to sample data
+      _loadSampleAppointments();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+  
+  /// Load sample appointments for testing/fallback
+  void _loadSampleAppointments() {
+    final doctors = getSampleDoctors();
+    
+    _appointments = [
+      // Upcoming appointment
+      Appointment(
+        id: 'apt1',
+        patientId: 'patient1',
+        patientName: 'Current User',
+        doctorId: doctors[0].id,
+        doctorName: doctors[0].name,
+        doctorPhotoUrl: null,
+        doctorSpecialty: doctors[0].specialization,
+        dateTime: DateTime.now().add(const Duration(days: 2, hours: 10)),
+        type: 'video',
+        status: 'confirmed',
+        symptoms: 'Fever and headache for 3 days',
+        notes: 'Please bring previous medical records',
+        consultationFee: 500.0,
+        createdAt: DateTime.now().subtract(const Duration(days: 1)),
+      ),
+      // Today's appointment
+      Appointment(
+        id: 'apt2',
+        patientId: 'patient1',
+        patientName: 'Current User',
+        doctorId: doctors[1].id,
+        doctorName: doctors[1].name,
+        doctorPhotoUrl: null,
+        doctorSpecialty: doctors[1].specialization,
+        dateTime: DateTime.now().add(const Duration(hours: 2)),
+        type: 'voice',
+        status: 'confirmed',
+        symptoms: 'Follow-up consultation',
+        consultationFee: 600.0,
+        createdAt: DateTime.now().subtract(const Duration(days: 3)),
+      ),
+      // Past completed appointment
+      Appointment(
+        id: 'apt3',
+        patientId: 'patient1',
+        patientName: 'Current User',
+        doctorId: doctors[2].id,
+        doctorName: doctors[2].name,
+        doctorPhotoUrl: null,
+        doctorSpecialty: doctors[2].specialization,
+        dateTime: DateTime.now().subtract(const Duration(days: 7)),
+        type: 'video',
+        status: 'completed',
+        symptoms: 'Skin rash on arms',
+        consultationFee: 700.0,
+        createdAt: DateTime.now().subtract(const Duration(days: 10)),
+        rating: 5.0,
+        review: 'Excellent consultation, very helpful!',
+      ),
+      // Past cancelled appointment
+      Appointment(
+        id: 'apt4',
+        patientId: 'patient1',
+        patientName: 'Current User',
+        doctorId: doctors[0].id,
+        doctorName: doctors[0].name,
+        doctorPhotoUrl: null,
+        doctorSpecialty: doctors[0].specialization,
+        dateTime: DateTime.now().subtract(const Duration(days: 15)),
+        type: 'chat',
+        status: 'cancelled',
+        symptoms: 'General checkup',
+        consultationFee: 500.0,
+        createdAt: DateTime.now().subtract(const Duration(days: 20)),
+        cancellationReason: 'Patient requested cancellation',
+      ),
+    ];
+  }
+
+  /// Get sample doctors for testing
+  List<Doctor> getSampleDoctors() {
+    return [
+      Doctor(
+        id: '1',
+        name: 'Dr. Rajesh Kumar',
+        specialization: 'Cardiology',
+        experience: 10,
+        rating: 4.8,
+      ),
+      Doctor(
+        id: '2',
+        name: 'Dr. Maya Shrestha',
+        specialization: 'Dermatology',
+        experience: 7,
+        rating: 4.5,
+      ),
+      Doctor(
+        id: '3',
+        name: 'Dr. Suresh Thapa',
+        specialization: 'Pediatrics',
+        experience: 12,
+        rating: 4.9,
+      ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Scaffold(
+      body: NestedScrollView(
+        headerSliverBuilder: (context, innerBoxIsScrolled) {
+          return [
+            SliverAppBar(
+              floating: true,
+              pinned: true,
+              title: const Text('Appointments'),
+              centerTitle: true,
+              bottom: TabBar(
+                controller: _tabController,
+                indicatorColor: AppColors.primaryNavyBlue,
+                labelColor: AppColors.primaryNavyBlue,
+                unselectedLabelColor:
+                    isDark ? Colors.grey[400] : Colors.grey[600],
+                labelStyle: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
+                tabs: const [
+                  Tab(text: 'Upcoming'),
+                  Tab(text: 'Past'),
+                ],
+              ),
+            ),
+          ];
+        },
+        body: TabBarView(
+          controller: _tabController,
+          children: [
+            // Upcoming appointments
+            _buildAppointmentsList(
+              appointments: _appointments
+                  .where((apt) => apt.isUpcoming)
+                  .toList(),
+              emptyMessage: 'No upcoming appointments',
+              emptyIcon: Icons.calendar_today,
+              isDark: isDark,
+            ),
+            // Past appointments
+            _buildAppointmentsList(
+              appointments: _appointments
+                  .where((apt) => !apt.isUpcoming)
+                  .toList(),
+              emptyMessage: 'No past appointments',
+              emptyIcon: Icons.history,
+              isDark: isDark,
+            ),
+          ],
+        ),
+      ),
+
+      // Floating action button for new booking
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () async {
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const BookingScreen(),
+            ),
+          );
+          
+          // Reload appointments if booking was successful
+          if (result == true && mounted) {
+            await _loadAppointments();
+          }
+        },
+        backgroundColor: AppColors.primaryNavyBlue,
+        icon: const Icon(Icons.add),
+        label: const Text('Book Appointment'),
+      ),
+    );
+  }
+
+  /// Build appointments list
+  Widget _buildAppointmentsList({
+    required List<Appointment> appointments,
+    required String emptyMessage,
+    required IconData emptyIcon,
+    required bool isDark,
+  }) {
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+    
+    if (appointments.isEmpty) {
+      return _buildEmptyState(emptyMessage, emptyIcon, isDark);
+    }
+
+    // Sort appointments by date
+    appointments.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        await _loadAppointments();
+      },
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: appointments.length,
+        itemBuilder: (context, index) {
+          final appointment = appointments[index];
+          
+          return AppointmentCard(
+            appointment: appointment,
+            onTap: () {
+              _showAppointmentDetails(appointment);
+            },
+            onCancel: appointment.isUpcoming
+                ? () => _cancelAppointment(appointment)
+                : null,
+            onReschedule: appointment.isUpcoming
+                ? () => _rescheduleAppointment(appointment)
+                : null,
+            onJoin: appointment.canJoin
+                ? () => _joinConsultation(appointment)
+                : null,
+            onRate: appointment.status == 'completed' && appointment.rating == null
+                ? () => _rateAppointment(appointment)
+                : null,
+          );
+        },
+      ),
+    );
+  }
+
+  /// Build empty state
+  Widget _buildEmptyState(String message, IconData icon, bool isDark) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            icon,
+            size: 80,
+            color: isDark ? Colors.grey[700] : Colors.grey[300],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            message,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: isDark ? Colors.grey[400] : AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Book your first appointment',
+            style: TextStyle(
+              fontSize: 14,
+              color: isDark ? Colors.grey[500] : AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const BookingScreen(),
+                ),
+              );
+            },
+            icon: const Icon(Icons.add),
+            label: const Text('Book Now'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryNavyBlue,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 32,
+                vertical: 12,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Show appointment details
+  void _showAppointmentDetails(Appointment appointment) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        
+        return DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          minChildSize: 0.5,
+          maxChildSize: 0.9,
+          expand: false,
+          builder: (context, scrollController) {
+            return Column(
+              children: [
+                // Handle bar
+                Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                // Content
+                Expanded(
+                  child: ListView(
+                    controller: scrollController,
+                    padding: const EdgeInsets.all(20),
+                    children: [
+                      Text(
+                        'Appointment Details',
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: isDark ? Colors.white : AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      
+                      // Doctor info
+                      Card(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 30,
+                                backgroundColor:
+                                    AppColors.primaryNavyBlue.withOpacity(0.1),
+                                backgroundImage: appointment.doctorPhotoUrl != null
+                                    ? NetworkImage(appointment.doctorPhotoUrl!)
+                                    : null,
+                                child: appointment.doctorPhotoUrl == null
+                                    ? Text(
+                                        appointment.doctorName[0].toUpperCase(),
+                                        style: const TextStyle(
+                                          fontSize: 24,
+                                          color: AppColors.primaryNavyBlue,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      )
+                                    : null,
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      appointment.doctorName,
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: isDark
+                                            ? Colors.white
+                                            : AppColors.textPrimary,
+                                      ),
+                                    ),
+                                    Text(
+                                      appointment.doctorSpecialty,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: isDark
+                                            ? Colors.grey[400]
+                                            : AppColors.textSecondary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: () {
+                                  // Find doctor and show profile
+                                  final doctors = getSampleDoctors();
+                                  final doctor = doctors.firstWhere(
+                                    (d) => d.id == appointment.doctorId,
+                                  );
+                                  Navigator.pop(context);
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => DoctorProfileScreen(
+                                        doctor: doctor,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(Icons.info_outline),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 16),
+                      
+                      // Appointment info
+                      _buildDetailRow(
+                        Icons.calendar_today,
+                        'Date',
+                        appointment.formattedDate,
+                        isDark,
+                      ),
+                      _buildDetailRow(
+                        Icons.access_time,
+                        'Time',
+                        appointment.formattedTime,
+                        isDark,
+                      ),
+                      _buildDetailRow(
+                        Icons.video_call,
+                        'Type',
+                        _getConsultationType(appointment.type),
+                        isDark,
+                      ),
+                      _buildDetailRow(
+                        Icons.info,
+                        'Status',
+                        appointment.status.toUpperCase(),
+                        isDark,
+                      ),
+                      _buildDetailRow(
+                        Icons.account_balance_wallet,
+                        'Fee',
+                        'Rs. ${appointment.consultationFee.toStringAsFixed(0)}',
+                        isDark,
+                      ),
+                      
+                      const SizedBox(height: 16),
+                      
+                      // Symptoms
+                      if (appointment.symptoms != null) ...[
+                        Text(
+                          'Symptoms',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.white : AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? AppColors.primaryNavyBlue.withOpacity(0.1)
+                                : AppColors.backgroundOffWhite,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            appointment.symptoms!,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: isDark
+                                  ? Colors.white
+                                  : AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                      ],
+                      
+                      // Notes
+                      if (appointment.notes != null &&
+                          appointment.notes!.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          'Notes',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.white : AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? AppColors.primaryNavyBlue.withOpacity(0.1)
+                                : AppColors.backgroundOffWhite,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            appointment.notes!,
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: isDark
+                                  ? Colors.white
+                                  : AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Build detail row
+  Widget _buildDetailRow(
+    IconData icon,
+    String label,
+    String value,
+    bool isDark,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: AppColors.primaryNavyBlue),
+          const SizedBox(width: 12),
+          Text(
+            '$label:',
+            style: TextStyle(
+              fontSize: 14,
+              color: isDark ? Colors.grey[400] : AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.white : AppColors.textPrimary,
+              ),
+              textAlign: TextAlign.end,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Cancel appointment
+  void _cancelAppointment(Appointment appointment) {
+    final appProvider = context.read<AppProvider>();
+    final currentUser = appProvider.currentUser;
+    
+    // Check if user is guest
+    if (currentUser == null || currentUser.isGuest || currentUser.id == 'guest') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please sign in to cancel appointments'),
+          backgroundColor: AppColors.secondaryCrimsonRed,
+        ),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Cancel Appointment'),
+        content: const Text(
+          'Are you sure you want to cancel this appointment? '
+          'This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('No'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              
+              try {
+                // Cancel in Firebase
+                await _databaseService.cancelAppointment(
+                  appointment.id,
+                  'Cancelled by patient',
+                );
+                
+                // Cancel notification reminders
+                await _notificationService.cancelAppointmentReminder(appointment.id);
+                
+                // Reload appointments
+                await _loadAppointments();
+                
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Appointment cancelled successfully'),
+                      backgroundColor: AppColors.secondaryCrimsonRed,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error cancelling appointment: $e'),
+                      backgroundColor: AppColors.secondaryCrimsonRed,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text(
+              'Yes, Cancel',
+              style: TextStyle(color: AppColors.secondaryCrimsonRed),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Reschedule appointment
+  void _rescheduleAppointment(Appointment appointment) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BookingScreen(
+          preSelectedDoctor: getSampleDoctors()
+              .firstWhere((d) => d.id == appointment.doctorId),
+        ),
+      ),
+    );
+  }
+
+  /// Join consultation
+  void _joinConsultation(Appointment appointment) {
+    // TODO: Navigate to video/voice/chat screen
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Joining ${_getConsultationType(appointment.type)}...',
+        ),
+        backgroundColor: AppColors.successGreen,
+      ),
+    );
+  }
+
+  /// Rate appointment
+  void _rateAppointment(Appointment appointment) {
+    final appProvider = context.read<AppProvider>();
+    final currentUser = appProvider.currentUser;
+    
+    // Check if user is guest
+    if (currentUser == null || currentUser.isGuest || currentUser.id == 'guest') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please sign in to rate appointments'),
+          backgroundColor: AppColors.secondaryCrimsonRed,
+        ),
+      );
+      return;
+    }
+
+    double rating = 5.0;
+    final reviewController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Rate Consultation'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'How was your consultation with ${appointment.doctorName}?',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(5, (index) {
+                      return IconButton(
+                        onPressed: () {
+                          setState(() {
+                            rating = (index + 1).toDouble();
+                          });
+                        },
+                        icon: Icon(
+                          index < rating ? Icons.star : Icons.star_border,
+                          color: Colors.amber,
+                          size: 40,
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: reviewController,
+                    decoration: const InputDecoration(
+                      labelText: 'Review (Optional)',
+                      hintText: 'Share your experience...',
+                      border: OutlineInputBorder(),
+                    ),
+                    maxLines: 3,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    
+                    try {
+                      // Save rating to Firebase
+                      await _databaseService.addAppointmentRating(
+                        appointment.id,
+                        rating,
+                        reviewController.text.trim().isEmpty
+                            ? null
+                            : reviewController.text.trim(),
+                      );
+                      
+                      // Reload appointments
+                      await _loadAppointments();
+                      
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Thank you for your feedback!'),
+                            backgroundColor: AppColors.successGreen,
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Error submitting rating: $e'),
+                            backgroundColor: AppColors.secondaryCrimsonRed,
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Submit'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// Get consultation type label
+  String _getConsultationType(String type) {
+    switch (type) {
+      case 'video':
+        return 'Video Call';
+      case 'voice':
+        return 'Voice Call';
+      case 'chat':
+        return 'Chat';
+      default:
+        return type;
+    }
+  }
+}

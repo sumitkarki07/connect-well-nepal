@@ -2,15 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:connect_well_nepal/providers/app_provider.dart';
 import 'package:connect_well_nepal/screens/profile_screen.dart';
-import 'package:connect_well_nepal/screens/appointments_screen.dart';
+import 'package:connect_well_nepal/screens/appointment_screen.dart';
 import 'package:connect_well_nepal/screens/resources_screen.dart';
 import 'package:connect_well_nepal/screens/settings_screen.dart';
 import 'package:connect_well_nepal/screens/doctor_dashboard_screen.dart';
 import 'package:connect_well_nepal/screens/ai_assistant_screen.dart';
 import 'package:connect_well_nepal/screens/all_doctors_screen.dart';
 import 'package:connect_well_nepal/screens/all_healthcare_screen.dart';
+import 'package:connect_well_nepal/screens/doctor_profile_screen.dart';
 import 'package:connect_well_nepal/screens/chat_list_screen.dart';
 import 'package:connect_well_nepal/utils/colors.dart';
+import 'package:connect_well_nepal/models/doctor_model.dart';
 import 'package:connect_well_nepal/models/place_model.dart';
 import 'package:connect_well_nepal/services/location_service.dart';
 import 'package:connect_well_nepal/services/osm_places_service.dart';
@@ -1168,15 +1170,26 @@ class _MainScreenState extends State<MainScreen> {
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
+    // Create Doctor model from card data
+    final doctor = Doctor(
+      id: name.toLowerCase().replaceAll(' ', '_').replaceAll('.', ''),
+      name: name,
+      specialization: specialty,
+      experience: int.tryParse(experience.split(' ')[0]) ?? 0,
+      rating: rating,
+    );
+
     return Card(
       elevation: 2,
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         onTap: () {
-          // TODO: Navigate to doctor profile
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Opening $name\'s profile...')),
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => DoctorProfileScreen(doctor: doctor),
+            ),
           );
         },
         borderRadius: BorderRadius.circular(12),
